@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:desktop": "node ./scripts/build-desktop.mjs",
+    "desktop:dev": "npx tauri dev",
+    "desktop:build": "npx tauri build",
     "start": "next start",
     "lint": "eslint"
   },
@@ -14,6 +17,7 @@
     "react-dom": "19.2.4"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.11.4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
