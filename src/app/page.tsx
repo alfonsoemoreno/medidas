@@ -4,6 +4,21 @@ import { ChangeEvent, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import styles from "./page.module.css";
 
+type SaveFilePickerOptions = {
+  suggestedName?: string;
+  types?: Array<{
+    description?: string;
+    accept: Record<string, string[]>;
+  }>;
+};
+
+type SaveFileHandle = {
+  createWritable: () => Promise<{
+    write: (data: Blob) => Promise<void>;
+    close: () => Promise<void>;
+  }>;
+};
+
 type Point = {
   x: number;
   y: number;
@@ -39,6 +54,22 @@ type Measurement = {
 type Viewport = {
   width: number;
   height: number;
+};
+
+type AnnotationMetrics = {
+  lineWidth: number;
+  pointRadius: number;
+  pointHaloRadius: number;
+  labelOffset: number;
+  labelWidth: number;
+  labelHeight: number;
+  labelRadius: number;
+  labelFontSize: number;
+  scaleBarThickness: number;
+  scaleBarTickHeight: number;
+  scaleBarLabelFontSize: number;
+  scaleBarLabelPaddingX: number;
+  scaleBarLabelPaddingY: number;
 };
 
 const TOOL_LABELS: Record<ToolMode, string> = {
@@ -97,6 +128,50 @@ function makeMeasurementName(index: number) {
   return `M${String(index + 1).padStart(2, "0")}`;
 }
 
+function createAnnotationMetrics(
+  imageAsset: ImageAsset | null,
+  multiplier: { labels: number; lines: number; scale: number },
+  mode: "screen" | "export",
+  displayScale = 1,
+): AnnotationMetrics {
+  const referenceSize = imageAsset ? Math.min(imageAsset.width, imageAsset.height) : 1600;
+  const exportBase = clamp(referenceSize / 900, 0.9, 2.8);
+  const screenBase = clamp(1 / Math.max(displayScale, 0.18), 1, 7.5);
+  const base = mode === "export" ? exportBase : screenBase;
+
+  return {
+    lineWidth: clamp(2.4 * base * multiplier.lines, 1.5, 18),
+    pointRadius: clamp(4.5 * base * multiplier.lines, 3, 26),
+    pointHaloRadius: clamp(9 * base * multiplier.lines, 6, 40),
+    labelOffset: clamp(24 * base * multiplier.labels, 14, 100),
+    labelWidth: clamp(148 * base * multiplier.labels, 96, 420),
+    labelHeight: clamp(32 * base * multiplier.labels, 24, 96),
+    labelRadius: clamp(16 * base * multiplier.labels, 12, 42),
+    labelFontSize: clamp(12 * base * multiplier.labels, 10, 42),
+    scaleBarThickness: clamp(4 * base * multiplier.scale, 2, 18),
+    scaleBarTickHeight: clamp(18 * base * multiplier.scale, 10, 52),
+    scaleBarLabelFontSize: clamp(13 * base * multiplier.scale, 10, 34),
+    scaleBarLabelPaddingX: clamp(12 * base * multiplier.scale, 8, 28),
+    scaleBarLabelPaddingY: clamp(8 * base * multiplier.scale, 6, 20),
+  };
+}
+
+async function canvasToBlob(canvas: HTMLCanvasElement, format: "png" | "jpeg") {
+  const mimeType = format === "jpeg" ? "image/jpeg" : "image/png";
+  const quality = format === "jpeg" ? 0.92 : undefined;
+
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("No se pudo generar el archivo de exportacion."));
+        return;
+      }
+
+      resolve(blob);
+    }, mimeType, quality);
+  });
+}
+
 function midpoint(start: Point, end: Point) {
   return {
     x: (start.x + end.x) / 2,
@@ -133,6 +208,9 @@ export default function Home() {
   const [unit, setUnit] = useState("um");
   const [calibration, setCalibration] = useState<Calibration | null>(null);
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
+  const [labelSize, setLabelSize] = useState(1);
+  const [lineSize, setLineSize] = useState(1);
+  const [scaleSize, setScaleSize] = useState(1);
 
   useEffect(() => {
     const element = viewportRef.current;
@@ -450,23 +528,70 @@ export default function Home() {
       drawMeasurement(context, measurement.start, measurement.end, {
         label: `${measurement.name} - ${formatNumber(measurement.value)} ${measurement.unit}`,
         color: measurement.color,
+        metrics: exportMetrics,
       });
     }
 
     if (showScaleBar && calibration) {
-      drawScaleBar(context, imageAsset.width, imageAsset.height, calibration);
+      drawScaleBar(context, imageAsset.width, imageAsset.height, calibration, exportMetrics);
+    }
+
+    const baseName = imageAsset.name.replace(/\.[^.]+$/, "");
+    const extension = format === "jpeg" ? "jpg" : "png";
+    const suggestedName = `${baseName}-mediciones.${extension}`;
+    const blob = await canvasToBlob(canvas, format);
+    const windowWithPicker = window as Window & {
+      showSaveFilePicker?: (options?: SaveFilePickerOptions) => Promise<SaveFileHandle>;
+    };
+
+    if (windowWithPicker.showSaveFilePicker) {
+      try {
+        const handle = await windowWithPicker.showSaveFilePicker({
+          suggestedName,
+          types: [
+            {
+              description: format === "jpeg" ? "JPEG image" : "PNG image",
+              accept: {
+                [format === "jpeg" ? "image/jpeg" : "image/png"]: [`.${extension}`],
+              },
+            },
+          ],
+        });
+
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return;
+      } catch (error) {
+        const maybeAbort = error as DOMException;
+
+        if (maybeAbort?.name === "AbortError") {
+          return;
+        }
+      }
     }
 
     const link = document.createElement("a");
-    const baseName = imageAsset.name.replace(/\.[^.]+$/, "");
-    link.href =
-      format === "jpeg" ? canvas.toDataURL("image/jpeg", 0.92) : canvas.toDataURL("image/png");
-    link.download = `${baseName}-mediciones.${format === "jpeg" ? "jpg" : "png"}`;
+    link.href = URL.createObjectURL(blob);
+    link.download = suggestedName;
     link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   }
 
   const draftCalibrationPixels =
     calibrationDraft.length === 2 ? distanceBetween(calibrationDraft[0], calibrationDraft[1]) : 0;
+  const displayScale = fitScale * zoom;
+  const screenMetrics = createAnnotationMetrics(
+    imageAsset,
+    { labels: labelSize, lines: lineSize, scale: scaleSize },
+    "screen",
+    displayScale,
+  );
+  const exportMetrics = createAnnotationMetrics(
+    imageAsset,
+    { labels: labelSize, lines: lineSize, scale: scaleSize },
+    "export",
+  );
 
   const viewerPhysicalWidth =
     calibration && fitScale > 0 && zoom > 0
@@ -567,6 +692,48 @@ export default function Home() {
                 </button>
               </div>
             </div>
+
+            <div className={styles.block}>
+              <div className={styles.label}>Tamano</div>
+              <div className={styles.sliderGroup}>
+                <label className={styles.sliderField}>
+                  <span>Etiquetas</span>
+                  <input
+                    type="range"
+                    min="0.6"
+                    max="2.4"
+                    step="0.1"
+                    value={labelSize}
+                    onChange={(event) => setLabelSize(Number(event.target.value))}
+                  />
+                  <strong>{labelSize.toFixed(1)}x</strong>
+                </label>
+                <label className={styles.sliderField}>
+                  <span>Lineas</span>
+                  <input
+                    type="range"
+                    min="0.6"
+                    max="2.4"
+                    step="0.1"
+                    value={lineSize}
+                    onChange={(event) => setLineSize(Number(event.target.value))}
+                  />
+                  <strong>{lineSize.toFixed(1)}x</strong>
+                </label>
+                <label className={styles.sliderField}>
+                  <span>Escala</span>
+                  <input
+                    type="range"
+                    min="0.6"
+                    max="2.4"
+                    step="0.1"
+                    value={scaleSize}
+                    onChange={(event) => setScaleSize(Number(event.target.value))}
+                  />
+                  <strong>{scaleSize.toFixed(1)}x</strong>
+                </label>
+              </div>
+            </div>
           </aside>
 
           <section className={styles.viewerColumn}>
@@ -632,6 +799,7 @@ export default function Home() {
                         label={`${formatNumber(calibration.knownDistance)} ${calibration.unit}`}
                         color="#f4d35e"
                         dashed
+                        metrics={screenMetrics}
                       />
                     )}
 
@@ -642,11 +810,12 @@ export default function Home() {
                         label={formatPixels(draftCalibrationPixels)}
                         color="#f4d35e"
                         dashed
+                        metrics={screenMetrics}
                       />
                     )}
 
                     {calibrationDraft.length === 1 && (
-                      <PointHandle point={calibrationDraft[0]} color="#f4d35e" />
+                      <PointHandle point={calibrationDraft[0]} color="#f4d35e" metrics={screenMetrics} />
                     )}
 
                     {measurements.map((measurement) => (
@@ -656,15 +825,32 @@ export default function Home() {
                         end={measurement.end}
                         label={`${measurement.name} - ${formatNumber(measurement.value)} ${measurement.unit}`}
                         color={measurement.color}
+                        metrics={screenMetrics}
                       />
                     ))}
 
-                    {measurementDraft && <PointHandle point={measurementDraft} color="#ffb347" />}
+                    {measurementDraft && (
+                      <PointHandle point={measurementDraft} color="#ffb347" metrics={screenMetrics} />
+                    )}
                   </svg>
 
                   {showScaleBar && calibration && scaleBarPixels > 0 ? (
-                    <div className={styles.scaleBar} style={{ width: `${scaleBarPixels * fitScale * zoom}px` }}>
-                      <span>
+                    <div
+                      className={styles.scaleBar}
+                      style={{
+                        width: `${scaleBarPixels * fitScale * zoom}px`,
+                        height: `${screenMetrics.scaleBarThickness}px`,
+                        boxShadow: `0 0 0 ${Math.max(screenMetrics.scaleBarThickness / 2, 1)}px rgba(7, 11, 18, 0.28)`,
+                        ["--tick-height" as string]: `${screenMetrics.scaleBarTickHeight}px`,
+                        ["--tick-width" as string]: `${Math.max(screenMetrics.scaleBarThickness * 0.75, 2)}px`,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: `${screenMetrics.scaleBarLabelFontSize}px`,
+                          padding: `${screenMetrics.scaleBarLabelPaddingY}px ${screenMetrics.scaleBarLabelPaddingX}px`,
+                        }}
+                      >
                         {formatNumber(scaleBarUnits)} {calibration.unit}
                       </span>
                     </div>
@@ -710,11 +896,19 @@ export default function Home() {
   );
 }
 
-function PointHandle({ point, color }: { point: Point; color: string }) {
+function PointHandle({
+  point,
+  color,
+  metrics,
+}: {
+  point: Point;
+  color: string;
+  metrics: AnnotationMetrics;
+}) {
   return (
     <g>
-      <circle cx={point.x} cy={point.y} r="10" fill={color} fillOpacity="0.18" />
-      <circle cx={point.x} cy={point.y} r="4.5" fill={color} />
+      <circle cx={point.x} cy={point.y} r={metrics.pointHaloRadius} fill={color} fillOpacity="0.18" />
+      <circle cx={point.x} cy={point.y} r={metrics.pointRadius} fill={color} />
     </g>
   );
 }
@@ -725,14 +919,16 @@ function MeasurementLine({
   label,
   color,
   dashed = false,
+  metrics,
 }: {
   start: Point;
   end: Point;
   label: string;
   color: string;
   dashed?: boolean;
+  metrics: AnnotationMetrics;
 }) {
-  const labelPosition = lineLabelPosition(start, end, 24);
+  const labelPosition = lineLabelPosition(start, end, metrics.labelOffset);
 
   return (
     <g>
@@ -742,23 +938,30 @@ function MeasurementLine({
         x2={end.x}
         y2={end.y}
         stroke={color}
-        strokeWidth="2.5"
+        strokeWidth={metrics.lineWidth}
         strokeLinecap="round"
         strokeDasharray={dashed ? "8 6" : "0"}
       />
-      <circle cx={start.x} cy={start.y} r="4.5" fill={color} />
-      <circle cx={end.x} cy={end.y} r="4.5" fill={color} />
+      <circle cx={start.x} cy={start.y} r={metrics.pointRadius} fill={color} />
+      <circle cx={end.x} cy={end.y} r={metrics.pointRadius} fill={color} />
       <g transform={`translate(${labelPosition.x} ${labelPosition.y})`}>
         <rect
-          x="-74"
-          y="-16"
-          width="148"
-          height="32"
-          rx="16"
+          x={-metrics.labelWidth / 2}
+          y={-metrics.labelHeight / 2}
+          width={metrics.labelWidth}
+          height={metrics.labelHeight}
+          rx={metrics.labelRadius}
           fill="rgba(6, 10, 17, 0.84)"
           stroke="rgba(255, 255, 255, 0.08)"
         />
-        <text x="0" y="4" textAnchor="middle" fill="#f9f6ef" fontSize="12" fontWeight="600">
+        <text
+          x="0"
+          y={metrics.labelFontSize * 0.33}
+          textAnchor="middle"
+          fill="#f9f6ef"
+          fontSize={metrics.labelFontSize}
+          fontWeight="600"
+        >
           {label}
         </text>
       </g>
@@ -770,14 +973,14 @@ function drawMeasurement(
   context: CanvasRenderingContext2D,
   start: Point,
   end: Point,
-  options: { label: string; color: string; dashed?: boolean },
+  options: { label: string; color: string; dashed?: boolean; metrics: AnnotationMetrics },
 ) {
-  const labelPosition = lineLabelPosition(start, end, 28);
+  const labelPosition = lineLabelPosition(start, end, options.metrics.labelOffset);
 
   context.save();
   context.strokeStyle = options.color;
   context.fillStyle = options.color;
-  context.lineWidth = 4;
+  context.lineWidth = options.metrics.lineWidth;
   context.lineCap = "round";
   context.setLineDash(options.dashed ? [12, 8] : []);
   context.beginPath();
@@ -788,18 +991,25 @@ function drawMeasurement(
 
   for (const point of [start, end]) {
     context.beginPath();
-    context.arc(point.x, point.y, 7, 0, Math.PI * 2);
+    context.arc(point.x, point.y, options.metrics.pointRadius * 1.55, 0, Math.PI * 2);
     context.fill();
   }
 
-  const labelWidth = 196;
-  const labelHeight = 40;
+  const labelWidth = options.metrics.labelWidth * 1.32;
+  const labelHeight = options.metrics.labelHeight * 1.25;
   context.fillStyle = "rgba(6, 10, 17, 0.84)";
-  roundRect(context, labelPosition.x - labelWidth / 2, labelPosition.y - labelHeight / 2, labelWidth, labelHeight, 18);
+  roundRect(
+    context,
+    labelPosition.x - labelWidth / 2,
+    labelPosition.y - labelHeight / 2,
+    labelWidth,
+    labelHeight,
+    options.metrics.labelRadius,
+  );
   context.fill();
 
   context.fillStyle = "#f9f6ef";
-  context.font = "600 16px sans-serif";
+  context.font = `600 ${Math.round(options.metrics.labelFontSize * 1.35)}px sans-serif`;
   context.textAlign = "center";
   context.textBaseline = "middle";
   context.fillText(options.label, labelPosition.x, labelPosition.y + 1);
@@ -811,6 +1021,7 @@ function drawScaleBar(
   imageWidth: number,
   imageHeight: number,
   calibration: Calibration,
+  metrics: AnnotationMetrics,
 ) {
   const physicalWidth = imageWidth / calibration.pixelsPerUnit;
   const scaleUnits = niceScaleLength(physicalWidth * 0.22);
@@ -820,30 +1031,37 @@ function drawScaleBar(
 
   context.save();
   context.fillStyle = "rgba(7, 11, 18, 0.7)";
-  roundRect(context, x - 16, y - 38, Math.max(scalePixels + 32, 170), 56, 20);
+  roundRect(
+    context,
+    x - 16,
+    y - 38,
+    Math.max(scalePixels + 32, 170),
+    56 + metrics.scaleBarLabelPaddingY,
+    20,
+  );
   context.fill();
 
   context.strokeStyle = "#f9f6ef";
-  context.lineWidth = 4;
+  context.lineWidth = metrics.scaleBarThickness;
   context.lineCap = "round";
   context.beginPath();
   context.moveTo(x, y);
   context.lineTo(x + scalePixels, y);
   context.stroke();
 
-  context.lineWidth = 3;
+  context.lineWidth = Math.max(metrics.scaleBarThickness * 0.75, 2);
   context.beginPath();
-  context.moveTo(x, y - 8);
-  context.lineTo(x, y + 8);
-  context.moveTo(x + scalePixels, y - 8);
-  context.lineTo(x + scalePixels, y + 8);
+  context.moveTo(x, y - metrics.scaleBarTickHeight / 2);
+  context.lineTo(x, y + metrics.scaleBarTickHeight / 2);
+  context.moveTo(x + scalePixels, y - metrics.scaleBarTickHeight / 2);
+  context.lineTo(x + scalePixels, y + metrics.scaleBarTickHeight / 2);
   context.stroke();
 
   context.fillStyle = "#f9f6ef";
-  context.font = "600 16px sans-serif";
+  context.font = `600 ${Math.round(metrics.scaleBarLabelFontSize * 1.2)}px sans-serif`;
   context.textAlign = "left";
   context.textBaseline = "middle";
-  context.fillText(`${formatNumber(scaleUnits)} ${calibration.unit}`, x, y - 18);
+  context.fillText(`${formatNumber(scaleUnits)} ${calibration.unit}`, x, y - metrics.scaleBarTickHeight);
   context.restore();
 }
 

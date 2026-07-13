@@ -172,6 +172,31 @@
   margin-top: 10px;
 }
 
+.sliderGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sliderField {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 42px;
+  gap: 10px;
+  align-items: center;
+  font-size: 0.9rem;
+}
+
+.sliderField span,
+.sliderField strong {
+  color: #324653;
+  font-weight: 600;
+}
+
+.sliderField input[type="range"] {
+  width: 100%;
+  accent-color: #163847;
+}
+
 .viewerColumn {
   min-width: 0;
 }
@@ -296,9 +321,9 @@
 .scaleBar::after {
   content: "";
   position: absolute;
-  top: -7px;
-  width: 3px;
-  height: 18px;
+  top: calc((var(--tick-height, 18px) - var(--tick-width, 3px)) / -2);
+  width: var(--tick-width, 3px);
+  height: var(--tick-height, 18px);
   background: #f9f6ef;
 }
 
