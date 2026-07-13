@@ -149,6 +149,23 @@
   font: inherit;
 }
 
+.presetSaveRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 104px;
+  gap: 8px;
+}
+
+.presetSaveRow input {
+  width: 100%;
+  min-height: 46px;
+  padding: 0 12px;
+  border: 1px solid rgba(15, 23, 32, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #102a33;
+  font: inherit;
+}
+
 .metaRow {
   display: flex;
   justify-content: space-between;
@@ -387,6 +404,77 @@
   gap: 8px;
 }
 
+.presetList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.presetItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.76);
+  border: 1px solid rgba(15, 23, 32, 0.05);
+}
+
+.presetItem strong,
+.presetItem span,
+.presetItem em {
+  display: block;
+}
+
+.presetItem strong {
+  color: #102a33;
+  font-size: 0.92rem;
+}
+
+.presetItem span {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 0.82rem;
+}
+
+.presetItem em {
+  margin-top: 4px;
+  color: #7b8a97;
+  font-size: 0.76rem;
+  font-style: normal;
+}
+
+.presetActions {
+  display: flex;
+  gap: 8px;
+}
+
+.presetActions button {
+  min-width: 70px;
+}
+
+.presetDeleteButton {
+  min-height: 46px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 15px;
+  background: rgba(252, 111, 89, 0.14);
+  color: #9a3412;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    transform 0.16s ease,
+    opacity 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.presetDeleteButton:hover {
+  transform: translateY(-1px);
+}
+
 .measurementItem {
   display: flex;
   align-items: center;
@@ -467,7 +555,22 @@
   }
 
   .toolGrid,
-  .formRow {
+  .formRow,
+  .presetSaveRow {
     grid-template-columns: 1fr;
+  }
+
+  .presetItem {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .presetActions {
+    width: 100%;
+  }
+
+  .presetActions button,
+  .presetDeleteButton {
+    flex: 1;
   }
 }

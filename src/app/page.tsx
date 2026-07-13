@@ -34,11 +34,23 @@ type ImageAsset = {
 };
 
 type Calibration = {
-  start: Point;
-  end: Point;
+  start?: Point | null;
+  end?: Point | null;
   knownDistance: number;
   unit: string;
   pixelsPerUnit: number;
+};
+
+type SavedCalibrationPreset = {
+  id: string;
+  name: string;
+  knownDistance: number;
+  unit: string;
+  pixelsPerUnit: number;
+  imageName?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  createdAt: number;
 };
 
 type Measurement = {
@@ -79,6 +91,8 @@ const TOOL_LABELS: Record<ToolMode, string> = {
 };
 
 const MEASUREMENT_COLORS = ["#fc6f59", "#ffb347", "#4cd7b2", "#6cb8ff", "#ffe27a"];
+const SAVED_CALIBRATIONS_KEY = "medidas.saved-calibrations";
+const LAST_CALIBRATION_KEY = "medidas.last-calibration";
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -128,6 +142,39 @@ function niceScaleLength(maxUnits: number) {
 
 function makeMeasurementName(index: number) {
   return `M${String(index + 1).padStart(2, "0")}`;
+}
+
+function makeCalibrationPresetName(name: string | undefined, total: number) {
+  const cleaned = name?.replace(/\.[^.]+$/, "").trim();
+  return cleaned ? `${cleaned} · escala` : `Calibracion ${String(total + 1).padStart(2, "0")}`;
+}
+
+function toCalibrationPreset(
+  calibration: Calibration,
+  imageAsset: ImageAsset | null,
+  name: string,
+): SavedCalibrationPreset {
+  return {
+    id: crypto.randomUUID(),
+    name: name.trim(),
+    knownDistance: calibration.knownDistance,
+    unit: calibration.unit,
+    pixelsPerUnit: calibration.pixelsPerUnit,
+    imageName: imageAsset?.name,
+    imageWidth: imageAsset?.width,
+    imageHeight: imageAsset?.height,
+    createdAt: Date.now(),
+  };
+}
+
+function applyCalibrationPresetValues(preset: SavedCalibrationPreset): Calibration {
+  return {
+    knownDistance: preset.knownDistance,
+    unit: preset.unit,
+    pixelsPerUnit: preset.pixelsPerUnit,
+    start: null,
+    end: null,
+  };
 }
 
 function createAnnotationMetrics(
@@ -217,6 +264,32 @@ export default function Home() {
   const [knownDistance, setKnownDistance] = useState("100");
   const [unit, setUnit] = useState("um");
   const [calibration, setCalibration] = useState<Calibration | null>(null);
+  const [savedCalibrations, setSavedCalibrations] = useState<SavedCalibrationPreset[]>(() => {
+    if (typeof window === "undefined") {
+      return [];
+    }
+
+    try {
+      const storedPresets = window.localStorage.getItem(SAVED_CALIBRATIONS_KEY);
+      const parsed = storedPresets ? (JSON.parse(storedPresets) as SavedCalibrationPreset[]) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+  const [lastCalibration, setLastCalibration] = useState<SavedCalibrationPreset | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+
+    try {
+      const storedLast = window.localStorage.getItem(LAST_CALIBRATION_KEY);
+      return storedLast ? (JSON.parse(storedLast) as SavedCalibrationPreset) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [presetName, setPresetName] = useState("");
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
   const [labelSize, setLabelSize] = useState(1);
   const [lineSize, setLineSize] = useState(1);
@@ -249,6 +322,19 @@ export default function Home() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(SAVED_CALIBRATIONS_KEY, JSON.stringify(savedCalibrations));
+  }, [savedCalibrations]);
+
+  useEffect(() => {
+    if (!lastCalibration) {
+      window.localStorage.removeItem(LAST_CALIBRATION_KEY);
+      return;
+    }
+
+    window.localStorage.setItem(LAST_CALIBRATION_KEY, JSON.stringify(lastCalibration));
+  }, [lastCalibration]);
 
   const fitScale =
     imageAsset && viewport.width > 0 && viewport.height > 0
@@ -338,16 +424,57 @@ export default function Home() {
       return;
     }
 
-    setCalibration({
+    const nextCalibration = {
       start: calibrationDraft[0],
       end: calibrationDraft[1],
       knownDistance: parsedDistance,
       unit: unit.trim() || "units",
       pixelsPerUnit: pixels / parsedDistance,
-    });
+    };
+
+    setCalibration(nextCalibration);
+    setLastCalibration(
+      toCalibrationPreset(
+        nextCalibration,
+        imageAsset,
+        makeCalibrationPresetName(imageAsset?.name, savedCalibrations.length),
+      ),
+    );
 
     setMeasurementDraft(null);
     setToolMode("measure");
+  }
+
+  function applySavedCalibration(preset: SavedCalibrationPreset) {
+    setCalibration(applyCalibrationPresetValues(preset));
+    setKnownDistance(String(preset.knownDistance));
+    setUnit(preset.unit);
+    setCalibrationDraft([]);
+    setMeasurementDraft(null);
+    setShowScaleBar(true);
+    setToolMode("measure");
+    setLastCalibration(preset);
+  }
+
+  function saveCurrentCalibration() {
+    if (!calibration) {
+      return;
+    }
+
+    const nextName = presetName.trim() || makeCalibrationPresetName(imageAsset?.name, savedCalibrations.length);
+    const preset = toCalibrationPreset(calibration, imageAsset, nextName);
+
+    setSavedCalibrations((current) => [preset, ...current].slice(0, 12));
+    setLastCalibration(preset);
+    setPresetName("");
+  }
+
+  function removeSavedCalibration(id: string) {
+    setSavedCalibrations((current) => current.filter((preset) => preset.id !== id));
+
+    if (lastCalibration?.id === id) {
+      setLastCalibration(null);
+    }
   }
 
   function handleCanvasClick(clientX: number, clientY: number) {
@@ -695,6 +822,14 @@ export default function Home() {
                 <span>Pixels</span>
                 <strong>{draftCalibrationPixels ? formatPixels(draftCalibrationPixels) : "-"}</strong>
               </div>
+              {calibration ? (
+                <div className={styles.metaRow}>
+                  <span>Actual</span>
+                  <strong>
+                    {formatNumber(calibration.knownDistance)} {calibration.unit}
+                  </strong>
+                </div>
+              ) : null}
               <div className={styles.buttonStack}>
                 <button
                   className={styles.secondaryButton}
@@ -703,10 +838,51 @@ export default function Home() {
                 >
                   Aplicar escala
                 </button>
+                <div className={styles.presetSaveRow}>
+                  <input
+                    value={presetName}
+                    onChange={(event) => setPresetName(event.target.value)}
+                    placeholder="Nombre de calibracion"
+                    disabled={!calibration}
+                  />
+                  <button className={styles.ghostButton} onClick={saveCurrentCalibration} disabled={!calibration}>
+                    Guardar
+                  </button>
+                </div>
+                <button
+                  className={styles.ghostButton}
+                  onClick={() => lastCalibration && applySavedCalibration(lastCalibration)}
+                  disabled={!lastCalibration}
+                >
+                  Recuperar ultima
+                </button>
                 <button className={styles.ghostButton} onClick={clearDrafts}>
                   Limpiar puntos
                 </button>
               </div>
+              {savedCalibrations.length ? (
+                <div className={styles.presetList}>
+                  {savedCalibrations.map((preset) => (
+                    <div key={preset.id} className={styles.presetItem}>
+                      <div>
+                        <strong>{preset.name}</strong>
+                        <span>
+                          {formatNumber(preset.knownDistance)} {preset.unit} · {formatPixels(preset.pixelsPerUnit)}
+                        </span>
+                        {preset.imageName ? <em>{preset.imageName}</em> : null}
+                      </div>
+                      <div className={styles.presetActions}>
+                        <button className={styles.ghostButton} onClick={() => applySavedCalibration(preset)}>
+                          Usar
+                        </button>
+                        <button className={styles.presetDeleteButton} onClick={() => removeSavedCalibration(preset.id)}>
+                          Quitar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             <div className={styles.block}>
@@ -835,7 +1011,7 @@ export default function Home() {
                   />
 
                   <svg className={styles.stageOverlay} viewBox={`0 0 ${imageAsset.width} ${imageAsset.height}`}>
-                    {calibration && (
+                    {calibration?.start && calibration?.end && (
                       <MeasurementLine
                         start={calibration.start}
                         end={calibration.end}
