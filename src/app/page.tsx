@@ -42,7 +42,7 @@ type Viewport = {
 };
 
 const TOOL_LABELS: Record<ToolMode, string> = {
-  navigate: "Navegar",
+  navigate: "Mover",
   calibrate: "Calibrar",
   measure: "Medir",
 };
@@ -97,11 +97,29 @@ function makeMeasurementName(index: number) {
   return `M${String(index + 1).padStart(2, "0")}`;
 }
 
+function midpoint(start: Point, end: Point) {
+  return {
+    x: (start.x + end.x) / 2,
+    y: (start.y + end.y) / 2,
+  };
+}
+
+function lineLabelPosition(start: Point, end: Point, offset = 22) {
+  const center = midpoint(start, end);
+  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+
+  return {
+    x: center.x + Math.sin(angle) * offset,
+    y: center.y - Math.cos(angle) * offset,
+  };
+}
+
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
-  const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+  const dragRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
+  const suppressClickRef = useRef(false);
 
   const [viewport, setViewport] = useState<Viewport>({ width: 0, height: 0 });
   const [imageAsset, setImageAsset] = useState<ImageAsset | null>(null);
@@ -151,8 +169,8 @@ export default function Home() {
 
   const renderedWidth = imageAsset ? imageAsset.width * fitScale * zoom : 0;
   const renderedHeight = imageAsset ? imageAsset.height * fitScale * zoom : 0;
-  const imageX = (viewport.width - renderedWidth) / 2 + pan.x;
-  const imageY = (viewport.height - renderedHeight) / 2 + pan.y;
+  const stageX = (viewport.width - renderedWidth) / 2 + pan.x;
+  const stageY = (viewport.height - renderedHeight) / 2 + pan.y;
 
   function resetWorkspace() {
     setToolMode("navigate");
@@ -163,33 +181,6 @@ export default function Home() {
     setMeasurementDraft(null);
     setCalibration(null);
     setMeasurements([]);
-  }
-
-  function screenToImage(clientX: number, clientY: number) {
-    const rect = viewportRef.current?.getBoundingClientRect();
-
-    if (!rect || !imageAsset || renderedWidth <= 0 || renderedHeight <= 0) {
-      return null;
-    }
-
-    const x = ((clientX - rect.left) - imageX) / (fitScale * zoom);
-    const y = ((clientY - rect.top) - imageY) / (fitScale * zoom);
-
-    if (Number.isNaN(x) || Number.isNaN(y)) {
-      return null;
-    }
-
-    return {
-      x: clamp(x, 0, imageAsset.width),
-      y: clamp(y, 0, imageAsset.height),
-    };
-  }
-
-  function imageToScreen(point: Point) {
-    return {
-      x: imageX + point.x * fitScale * zoom,
-      y: imageY + point.y * fitScale * zoom,
-    };
   }
 
   function openFilePicker() {
@@ -231,6 +222,22 @@ export default function Home() {
     event.target.value = "";
   }
 
+  function screenToImage(clientX: number, clientY: number) {
+    const rect = viewportRef.current?.getBoundingClientRect();
+
+    if (!rect || !imageAsset || renderedWidth <= 0 || renderedHeight <= 0) {
+      return null;
+    }
+
+    const localX = clientX - rect.left - stageX;
+    const localY = clientY - rect.top - stageY;
+
+    return {
+      x: clamp(localX / (fitScale * zoom), 0, imageAsset.width),
+      y: clamp(localY / (fitScale * zoom), 0, imageAsset.height),
+    };
+  }
+
   function applyCalibration() {
     if (calibrationDraft.length !== 2) {
       return;
@@ -264,14 +271,7 @@ export default function Home() {
 
     if (toolMode === "calibrate") {
       setMeasurementDraft(null);
-      setCalibrationDraft((current) => {
-        if (current.length >= 2) {
-          return [point];
-        }
-
-        return [...current, point];
-      });
-
+      setCalibrationDraft((current) => (current.length >= 2 ? [point] : [...current, point]));
       return;
     }
 
@@ -309,6 +309,7 @@ export default function Home() {
       pointerId: event.pointerId,
       x: event.clientX,
       y: event.clientY,
+      moved: false,
     };
 
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -323,11 +324,13 @@ export default function Home() {
 
     const deltaX = event.clientX - activeDrag.x;
     const deltaY = event.clientY - activeDrag.y;
+    const moved = activeDrag.moved || Math.abs(deltaX) > 1 || Math.abs(deltaY) > 1;
 
     dragRef.current = {
       pointerId: event.pointerId,
       x: event.clientX,
       y: event.clientY,
+      moved,
     };
 
     setPan((current) => ({
@@ -338,9 +341,42 @@ export default function Home() {
 
   function handlePointerUp(event: React.PointerEvent<HTMLDivElement>) {
     if (dragRef.current?.pointerId === event.pointerId) {
+      suppressClickRef.current = dragRef.current.moved;
       dragRef.current = null;
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+  }
+
+  function applyZoom(nextZoom: number, anchor?: { x: number; y: number }) {
+    if (!imageAsset) {
+      return;
+    }
+
+    const boundedZoom = clamp(nextZoom, 0.25, 20);
+
+    if (Math.abs(boundedZoom - zoom) < 0.0001) {
+      return;
+    }
+
+    const anchorPoint = anchor ?? {
+      x: viewport.width / 2,
+      y: viewport.height / 2,
+    };
+
+    const imagePoint = {
+      x: (anchorPoint.x - stageX) / (fitScale * zoom),
+      y: (anchorPoint.y - stageY) / (fitScale * zoom),
+    };
+
+    const nextScale = fitScale * boundedZoom;
+    const nextRenderedWidth = imageAsset.width * nextScale;
+    const nextRenderedHeight = imageAsset.height * nextScale;
+
+    setZoom(boundedZoom);
+    setPan({
+      x: anchorPoint.x - (viewport.width - nextRenderedWidth) / 2 - imagePoint.x * nextScale,
+      y: anchorPoint.y - (viewport.height - nextRenderedHeight) / 2 - imagePoint.y * nextScale,
+    });
   }
 
   function handleWheel(event: React.WheelEvent<HTMLDivElement>) {
@@ -350,34 +386,83 @@ export default function Home() {
 
     event.preventDefault();
 
-    const pointBefore = screenToImage(event.clientX, event.clientY);
-    const nextZoom = clamp(zoom * (event.deltaY < 0 ? 1.1 : 0.92), 0.6, 8);
-
-    if (!pointBefore || nextZoom === zoom) {
-      return;
-    }
-
+    const sensitivity = event.ctrlKey ? 0.0024 : 0.0012;
     const rect = viewportRef.current?.getBoundingClientRect();
 
     if (!rect) {
       return;
     }
 
-    const nextRenderedWidth = imageAsset.width * fitScale * nextZoom;
-    const nextRenderedHeight = imageAsset.height * fitScale * nextZoom;
-    const cursorX = event.clientX - rect.left;
-    const cursorY = event.clientY - rect.top;
-
-    setPan({
-      x: cursorX - (viewport.width - nextRenderedWidth) / 2 - pointBefore.x * fitScale * nextZoom,
-      y: cursorY - (viewport.height - nextRenderedHeight) / 2 - pointBefore.y * fitScale * nextZoom,
+    applyZoom(zoom * Math.exp(-event.deltaY * sensitivity), {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
     });
+  }
 
-    setZoom(nextZoom);
+  function zoomIn() {
+    applyZoom(zoom * 1.2);
+  }
+
+  function zoomOut() {
+    applyZoom(zoom / 1.2);
+  }
+
+  function resetView() {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }
+
+  function clearDrafts() {
+    setCalibrationDraft([]);
+    setMeasurementDraft(null);
   }
 
   function removeMeasurement(id: string) {
     setMeasurements((current) => current.filter((measurement) => measurement.id !== id));
+  }
+
+  async function exportAnnotatedImage(format: "png" | "jpeg") {
+    if (!imageAsset) {
+      return;
+    }
+
+    const image = new window.Image();
+    image.src = imageAsset.src;
+
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("No se pudo cargar la imagen para exportar."));
+    });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = imageAsset.width;
+    canvas.height = imageAsset.height;
+
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      return;
+    }
+
+    context.drawImage(image, 0, 0, imageAsset.width, imageAsset.height);
+
+    for (const measurement of measurements) {
+      drawMeasurement(context, measurement.start, measurement.end, {
+        label: `${measurement.name} - ${formatNumber(measurement.value)} ${measurement.unit}`,
+        color: measurement.color,
+      });
+    }
+
+    if (showScaleBar && calibration) {
+      drawScaleBar(context, imageAsset.width, imageAsset.height, calibration);
+    }
+
+    const link = document.createElement("a");
+    const baseName = imageAsset.name.replace(/\.[^.]+$/, "");
+    link.href =
+      format === "jpeg" ? canvas.toDataURL("image/jpeg", 0.92) : canvas.toDataURL("image/png");
+    link.download = `${baseName}-mediciones.${format === "jpeg" ? "jpg" : "png"}`;
+    link.click();
   }
 
   const draftCalibrationPixels =
@@ -389,7 +474,7 @@ export default function Home() {
       : 0;
 
   const scaleBarUnits = calibration ? niceScaleLength(viewerPhysicalWidth * 0.22) : 0;
-  const scaleBarPixels = calibration ? scaleBarUnits * calibration.pixelsPerUnit * fitScale * zoom : 0;
+  const scaleBarPixels = calibration ? scaleBarUnits * calibration.pixelsPerUnit : 0;
 
   return (
     <div className={styles.page}>
@@ -402,73 +487,14 @@ export default function Home() {
       />
 
       <main className={styles.shell}>
-        <section className={styles.hero}>
-          <div>
-            <span className={styles.eyebrow}>Microscopy Measurement Studio</span>
-            <h1>Calibracion visual y metrologia sobre fotografias microscopicas.</h1>
-          </div>
-
-          <p>
-            Sube una imagen, define una referencia real entre dos puntos y mide dentro de la
-            fotografia con anotaciones limpias, barra de escala y un layout pensado como software
-            cientifico serio.
-          </p>
-
-          <div className={styles.heroStats}>
-            <div className={styles.statCard}>
-              <strong>{calibration ? calibration.unit : "Listo"}</strong>
-              <span>Unidad activa</span>
-            </div>
-            <div className={styles.statCard}>
-              <strong>{measurements.length}</strong>
-              <span>Marcas guardadas</span>
-            </div>
-            <div className={styles.statCard}>
-              <strong>{Math.round(zoom * 100)}%</strong>
-              <span>Zoom del visor</span>
-            </div>
-          </div>
-        </section>
-
         <section className={styles.workspace}>
-          <aside className={styles.panel}>
-            <div className={styles.card}>
-              <div className={styles.cardHeader}>
-                <span className={styles.cardIndex}>01</span>
-                <div>
-                  <h2>Imagen</h2>
-                  <p>Carga una foto del microscopio o lupa y abre el espacio de trabajo.</p>
-                </div>
-              </div>
+          <aside className={styles.sidebar}>
+            <button className={styles.primaryButton} onClick={openFilePicker}>
+              {imageAsset ? "Cambiar imagen" : "Subir imagen"}
+            </button>
 
-              <button className={styles.primaryButton} onClick={openFilePicker}>
-                {imageAsset ? "Reemplazar imagen" : "Subir fotografia"}
-              </button>
-
-              {imageAsset ? (
-                <div className={styles.metaBlock}>
-                  <span>{imageAsset.name}</span>
-                  <span>
-                    {imageAsset.width} x {imageAsset.height} px
-                  </span>
-                </div>
-              ) : (
-                <div className={styles.emptyNote}>
-                  Trabaja mejor con imagenes donde la muestra y la referencia esten en el mismo
-                  plano focal.
-                </div>
-              )}
-            </div>
-
-            <div className={styles.card}>
-              <div className={styles.cardHeader}>
-                <span className={styles.cardIndex}>02</span>
-                <div>
-                  <h2>Herramienta</h2>
-                  <p>Alterna entre navegacion, calibracion y medicion.</p>
-                </div>
-              </div>
-
+            <div className={styles.block}>
+              <div className={styles.label}>Herramienta</div>
               <div className={styles.toolGrid}>
                 {(["navigate", "calibrate", "measure"] as ToolMode[]).map((mode) => (
                   <button
@@ -481,103 +507,83 @@ export default function Home() {
                   </button>
                 ))}
               </div>
-
-              <div className={styles.metaBlock}>
-                <span>Modo actual</span>
-                <span>{TOOL_LABELS[toolMode]}</span>
-              </div>
             </div>
 
-            <div className={styles.card}>
-              <div className={styles.cardHeader}>
-                <span className={styles.cardIndex}>03</span>
-                <div>
-                  <h2>Calibracion</h2>
-                  <p>Marca dos puntos cuya distancia real conozcas para fijar la escala.</p>
-                </div>
-              </div>
-
+            <div className={styles.block}>
+              <div className={styles.label}>Calibracion</div>
               <div className={styles.formRow}>
-                <label>
-                  <span>Distancia real</span>
-                  <input
-                    value={knownDistance}
-                    onChange={(event) => setKnownDistance(event.target.value)}
-                    inputMode="decimal"
-                  />
-                </label>
-                <label>
-                  <span>Unidad</span>
-                  <input value={unit} onChange={(event) => setUnit(event.target.value)} />
-                </label>
+                <input
+                  value={knownDistance}
+                  onChange={(event) => setKnownDistance(event.target.value)}
+                  inputMode="decimal"
+                  placeholder="Distancia"
+                />
+                <input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="Unidad" />
               </div>
-
-              <div className={styles.metaBlock}>
-                <span>Puntos seleccionados</span>
-                <span>{calibrationDraft.length}/2</span>
+              <div className={styles.metaRow}>
+                <span>Puntos</span>
+                <strong>{calibrationDraft.length}/2</strong>
               </div>
-
-              <div className={styles.metaBlock}>
-                <span>Longitud en pixeles</span>
-                <span>{draftCalibrationPixels ? formatPixels(draftCalibrationPixels) : "Pendiente"}</span>
+              <div className={styles.metaRow}>
+                <span>Pixels</span>
+                <strong>{draftCalibrationPixels ? formatPixels(draftCalibrationPixels) : "-"}</strong>
               </div>
-
-              <div className={styles.buttonRow}>
+              <div className={styles.buttonStack}>
                 <button
-                  className={styles.primaryButton}
+                  className={styles.secondaryButton}
                   onClick={applyCalibration}
                   disabled={calibrationDraft.length !== 2}
                 >
                   Aplicar escala
                 </button>
-                <button className={styles.secondaryButton} onClick={() => setCalibrationDraft([])}>
-                  Limpiar
+                <button className={styles.ghostButton} onClick={clearDrafts}>
+                  Limpiar puntos
                 </button>
               </div>
-
-              {calibration ? (
-                <div className={styles.calibrationBadge}>
-                  1 {calibration.unit} = {formatPixels(calibration.pixelsPerUnit)}
-                </div>
-              ) : null}
             </div>
 
-            <div className={styles.card}>
-              <div className={styles.cardHeader}>
-                <span className={styles.cardIndex}>04</span>
-                <div>
-                  <h2>Patrones de producto</h2>
-                  <p>La propuesta se apoya en convenciones de software cientifico ya asentadas.</p>
-                </div>
+            <div className={styles.block}>
+              <div className={styles.label}>Salida</div>
+              <div className={styles.buttonStack}>
+                <button
+                  className={styles.secondaryButton}
+                  onClick={() => exportAnnotatedImage("png")}
+                  disabled={!imageAsset}
+                >
+                  Exportar PNG
+                </button>
+                <button
+                  className={styles.secondaryButton}
+                  onClick={() => exportAnnotatedImage("jpeg")}
+                  disabled={!imageAsset}
+                >
+                  Exportar JPG
+                </button>
+                <button className={styles.ghostButton} onClick={() => setShowScaleBar((current) => !current)} disabled={!calibration}>
+                  {showScaleBar ? "Ocultar escala" : "Mostrar escala"}
+                </button>
+                <button className={styles.ghostButton} onClick={resetView} disabled={!imageAsset}>
+                  Reset vista
+                </button>
               </div>
-
-              <ul className={styles.insightList}>
-                <li>Calibracion explicita con una longitud conocida antes de medir.</li>
-                <li>Overlays no destructivos para mostrar marcas sin alterar la imagen original.</li>
-                <li>Objetos y anotaciones persistentes con lectura inmediata del valor medido.</li>
-                <li>Barra de escala visible en pantalla para contexto continuo durante la revision.</li>
-              </ul>
             </div>
           </aside>
 
           <section className={styles.viewerColumn}>
-            <div className={styles.viewerHeader}>
-              <div>
-                <span className={styles.viewerLabel}>Workbench</span>
-                <h2>Visor calibrado</h2>
+            <div className={styles.viewerTopbar}>
+              <div className={styles.statusCluster}>
+                <span>{imageAsset?.name ?? "Sin imagen"}</span>
+                {imageAsset ? <span>{imageAsset.width} x {imageAsset.height}</span> : null}
               </div>
-
-              <div className={styles.viewerActions}>
-                <button className={styles.secondaryButton} onClick={() => setZoom(1)}>
-                  Ajustar zoom
+              <div className={styles.statusCluster}>
+                <button className={styles.zoomButton} onClick={zoomOut} disabled={!imageAsset}>
+                  -
                 </button>
-                <button
-                  className={styles.secondaryButton}
-                  onClick={() => setShowScaleBar((current) => !current)}
-                  disabled={!calibration}
-                >
-                  {showScaleBar ? "Ocultar escala" : "Mostrar escala"}
+                <button className={styles.zoomButton} onClick={zoomIn} disabled={!imageAsset}>
+                  +
                 </button>
+                <span>{Math.round(zoom * 100)}%</span>
+                {calibration ? <span>1 {calibration.unit} = {formatPixels(calibration.pixelsPerUnit)}</span> : null}
               </div>
             </div>
 
@@ -590,14 +596,25 @@ export default function Home() {
               onPointerCancel={handlePointerUp}
               onWheel={handleWheel}
               onClick={(event) => {
-                if (toolMode !== "navigate") {
-                  handleCanvasClick(event.clientX, event.clientY);
+                if (toolMode === "navigate" || suppressClickRef.current) {
+                  suppressClickRef.current = false;
+                  return;
                 }
+
+                handleCanvasClick(event.clientX, event.clientY);
               }}
               data-mode={toolMode}
             >
               {imageAsset ? (
-                <>
+                <div
+                  className={styles.stage}
+                  style={{
+                    width: `${renderedWidth}px`,
+                    height: `${renderedHeight}px`,
+                    left: `${stageX}px`,
+                    top: `${stageY}px`,
+                  }}
+                >
                   <Image
                     className={styles.stageImage}
                     src={imageAsset.src}
@@ -605,19 +622,13 @@ export default function Home() {
                     width={imageAsset.width}
                     height={imageAsset.height}
                     unoptimized
-                    style={{
-                      width: `${renderedWidth}px`,
-                      height: `${renderedHeight}px`,
-                      left: `${imageX}px`,
-                      top: `${imageY}px`,
-                    }}
                   />
 
-                  <svg className={styles.overlay} viewBox={`0 0 ${viewport.width} ${viewport.height}`}>
+                  <svg className={styles.stageOverlay} viewBox={`0 0 ${imageAsset.width} ${imageAsset.height}`}>
                     {calibration && (
                       <MeasurementLine
-                        start={imageToScreen(calibration.start)}
-                        end={imageToScreen(calibration.end)}
+                        start={calibration.start}
+                        end={calibration.end}
                         label={`${formatNumber(calibration.knownDistance)} ${calibration.unit}`}
                         color="#f4d35e"
                         dashed
@@ -626,8 +637,8 @@ export default function Home() {
 
                     {calibrationDraft.length === 2 && !calibration && (
                       <MeasurementLine
-                        start={imageToScreen(calibrationDraft[0])}
-                        end={imageToScreen(calibrationDraft[1])}
+                        start={calibrationDraft[0]}
+                        end={calibrationDraft[1]}
                         label={formatPixels(draftCalibrationPixels)}
                         color="#f4d35e"
                         dashed
@@ -635,87 +646,45 @@ export default function Home() {
                     )}
 
                     {calibrationDraft.length === 1 && (
-                      <PointHandle point={imageToScreen(calibrationDraft[0])} color="#f4d35e" />
+                      <PointHandle point={calibrationDraft[0]} color="#f4d35e" />
                     )}
 
                     {measurements.map((measurement) => (
                       <MeasurementLine
                         key={measurement.id}
-                        start={imageToScreen(measurement.start)}
-                        end={imageToScreen(measurement.end)}
+                        start={measurement.start}
+                        end={measurement.end}
                         label={`${measurement.name} - ${formatNumber(measurement.value)} ${measurement.unit}`}
                         color={measurement.color}
                       />
                     ))}
 
-                    {measurementDraft && (
-                      <PointHandle point={imageToScreen(measurementDraft)} color="#ffb347" />
-                    )}
-
-                    {showScaleBar && calibration && scaleBarPixels > 0 ? (
-                      <g transform={`translate(36 ${viewport.height - 42})`}>
-                        <line
-                          x1="0"
-                          y1="0"
-                          x2={scaleBarPixels}
-                          y2="0"
-                          stroke="#f9f6ef"
-                          strokeWidth="4"
-                          strokeLinecap="round"
-                        />
-                        <line x1="0" y1="-8" x2="0" y2="8" stroke="#f9f6ef" strokeWidth="3" />
-                        <line
-                          x1={scaleBarPixels}
-                          y1="-8"
-                          x2={scaleBarPixels}
-                          y2="8"
-                          stroke="#f9f6ef"
-                          strokeWidth="3"
-                        />
-                        <rect
-                          x="-12"
-                          y="-34"
-                          width={Math.max(scaleBarPixels + 24, 148)}
-                          height="52"
-                          rx="18"
-                          fill="rgba(7, 11, 18, 0.68)"
-                        />
-                        <text x="0" y="-12" fill="#f9f6ef" fontSize="13" fontWeight="600">
-                          {formatNumber(scaleBarUnits)} {calibration.unit}
-                        </text>
-                      </g>
-                    ) : null}
+                    {measurementDraft && <PointHandle point={measurementDraft} color="#ffb347" />}
                   </svg>
-                </>
-              ) : (
-                <div className={styles.viewerEmpty}>
-                  <div className={styles.viewerEmptyBadge}>Precision Ready</div>
-                  <h3>Sube una imagen para iniciar el laboratorio visual.</h3>
-                  <p>
-                    El visor esta preparado para calibrar desde una referencia conocida y dejar
-                    marcas de medicion limpias sobre la fotografia.
-                  </p>
+
+                  {showScaleBar && calibration && scaleBarPixels > 0 ? (
+                    <div className={styles.scaleBar} style={{ width: `${scaleBarPixels * fitScale * zoom}px` }}>
+                      <span>
+                        {formatNumber(scaleBarUnits)} {calibration.unit}
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
+              ) : (
+                <div className={styles.viewerEmpty}>Sube una imagen para empezar.</div>
               )}
             </div>
 
-            <div className={styles.viewerFooter}>
-              <span>Rueda del mouse: zoom</span>
-              <span>Modo navegar: arrastra para desplazar</span>
-              <span>Modo calibrar/medir: clic sobre dos puntos</span>
+            <div className={styles.viewerHint}>
+              <span>Trackpad o rueda: zoom suave</span>
+              <span>Modo mover: arrastrar</span>
+              <span>Modo calibrar o medir: dos clics</span>
             </div>
           </section>
 
-          <aside className={styles.panel}>
-            <div className={styles.card}>
-              <div className={styles.cardHeader}>
-                <span className={styles.cardIndex}>05</span>
-                <div>
-                  <h2>Mediciones</h2>
-                  <p>Las marcas quedan registradas con su valor y se pueden retirar una a una.</p>
-                </div>
-              </div>
-
+          <aside className={styles.sidebar}>
+            <div className={styles.block}>
+              <div className={styles.label}>Mediciones</div>
               {measurements.length ? (
                 <div className={styles.measurementList}>
                   {measurements.map((measurement) => (
@@ -731,35 +700,8 @@ export default function Home() {
                   ))}
                 </div>
               ) : (
-                <div className={styles.emptyNote}>
-                  No hay marcas todavia. Despues de calibrar, cambia a medir y selecciona pares de
-                  puntos.
-                </div>
+                <div className={styles.emptyState}>Sin mediciones</div>
               )}
-            </div>
-
-            <div className={styles.card}>
-              <div className={styles.cardHeader}>
-                <span className={styles.cardIndex}>06</span>
-                <div>
-                  <h2>Criterio tecnico</h2>
-                  <p>Que hace solida la solucion y donde conviene ir mas lejos.</p>
-                </div>
-              </div>
-
-              <ul className={styles.insightList}>
-                <li>
-                  La medicion actual asume que referencia y muestra comparten plano y magnificacion.
-                </li>
-                <li>
-                  Para tomas con perspectiva o inclinacion, el siguiente paso correcto es
-                  rectificacion planar por homografia.
-                </li>
-                <li>
-                  Para produccion real, conviene guardar proyectos, exportar capturas y soportar
-                  unidades predefinidas como um, mm y nm.
-                </li>
-              </ul>
             </div>
           </aside>
         </section>
@@ -771,8 +713,8 @@ export default function Home() {
 function PointHandle({ point, color }: { point: Point; color: string }) {
   return (
     <g>
-      <circle cx={point.x} cy={point.y} r="8" fill={color} fillOpacity="0.2" />
-      <circle cx={point.x} cy={point.y} r="4" fill={color} />
+      <circle cx={point.x} cy={point.y} r="10" fill={color} fillOpacity="0.18" />
+      <circle cx={point.x} cy={point.y} r="4.5" fill={color} />
     </g>
   );
 }
@@ -790,11 +732,7 @@ function MeasurementLine({
   color: string;
   dashed?: boolean;
 }) {
-  const midX = (start.x + end.x) / 2;
-  const midY = (start.y + end.y) / 2;
-  const angle = Math.atan2(end.y - start.y, end.x - start.x);
-  const offsetX = Math.sin(angle) * 20;
-  const offsetY = -Math.cos(angle) * 20;
+  const labelPosition = lineLabelPosition(start, end, 24);
 
   return (
     <g>
@@ -804,33 +742,128 @@ function MeasurementLine({
         x2={end.x}
         y2={end.y}
         stroke={color}
-        strokeWidth="3"
+        strokeWidth="2.5"
         strokeLinecap="round"
         strokeDasharray={dashed ? "8 6" : "0"}
       />
-      <circle cx={start.x} cy={start.y} r="5" fill={color} />
-      <circle cx={end.x} cy={end.y} r="5" fill={color} />
-      <g transform={`translate(${midX + offsetX} ${midY + offsetY})`}>
+      <circle cx={start.x} cy={start.y} r="4.5" fill={color} />
+      <circle cx={end.x} cy={end.y} r="4.5" fill={color} />
+      <g transform={`translate(${labelPosition.x} ${labelPosition.y})`}>
         <rect
           x="-74"
-          y="-17"
+          y="-16"
           width="148"
-          height="34"
-          rx="17"
-          fill="rgba(6, 10, 17, 0.85)"
+          height="32"
+          rx="16"
+          fill="rgba(6, 10, 17, 0.84)"
           stroke="rgba(255, 255, 255, 0.08)"
         />
-        <text
-          x="0"
-          y="4"
-          textAnchor="middle"
-          fill="#f9f6ef"
-          fontSize="12"
-          fontWeight="600"
-        >
+        <text x="0" y="4" textAnchor="middle" fill="#f9f6ef" fontSize="12" fontWeight="600">
           {label}
         </text>
       </g>
     </g>
   );
+}
+
+function drawMeasurement(
+  context: CanvasRenderingContext2D,
+  start: Point,
+  end: Point,
+  options: { label: string; color: string; dashed?: boolean },
+) {
+  const labelPosition = lineLabelPosition(start, end, 28);
+
+  context.save();
+  context.strokeStyle = options.color;
+  context.fillStyle = options.color;
+  context.lineWidth = 4;
+  context.lineCap = "round";
+  context.setLineDash(options.dashed ? [12, 8] : []);
+  context.beginPath();
+  context.moveTo(start.x, start.y);
+  context.lineTo(end.x, end.y);
+  context.stroke();
+  context.setLineDash([]);
+
+  for (const point of [start, end]) {
+    context.beginPath();
+    context.arc(point.x, point.y, 7, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  const labelWidth = 196;
+  const labelHeight = 40;
+  context.fillStyle = "rgba(6, 10, 17, 0.84)";
+  roundRect(context, labelPosition.x - labelWidth / 2, labelPosition.y - labelHeight / 2, labelWidth, labelHeight, 18);
+  context.fill();
+
+  context.fillStyle = "#f9f6ef";
+  context.font = "600 16px sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(options.label, labelPosition.x, labelPosition.y + 1);
+  context.restore();
+}
+
+function drawScaleBar(
+  context: CanvasRenderingContext2D,
+  imageWidth: number,
+  imageHeight: number,
+  calibration: Calibration,
+) {
+  const physicalWidth = imageWidth / calibration.pixelsPerUnit;
+  const scaleUnits = niceScaleLength(physicalWidth * 0.22);
+  const scalePixels = scaleUnits * calibration.pixelsPerUnit;
+  const x = 38;
+  const y = imageHeight - 42;
+
+  context.save();
+  context.fillStyle = "rgba(7, 11, 18, 0.7)";
+  roundRect(context, x - 16, y - 38, Math.max(scalePixels + 32, 170), 56, 20);
+  context.fill();
+
+  context.strokeStyle = "#f9f6ef";
+  context.lineWidth = 4;
+  context.lineCap = "round";
+  context.beginPath();
+  context.moveTo(x, y);
+  context.lineTo(x + scalePixels, y);
+  context.stroke();
+
+  context.lineWidth = 3;
+  context.beginPath();
+  context.moveTo(x, y - 8);
+  context.lineTo(x, y + 8);
+  context.moveTo(x + scalePixels, y - 8);
+  context.lineTo(x + scalePixels, y + 8);
+  context.stroke();
+
+  context.fillStyle = "#f9f6ef";
+  context.font = "600 16px sans-serif";
+  context.textAlign = "left";
+  context.textBaseline = "middle";
+  context.fillText(`${formatNumber(scaleUnits)} ${calibration.unit}`, x, y - 18);
+  context.restore();
+}
+
+function roundRect(
+  context: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+) {
+  context.beginPath();
+  context.moveTo(x + radius, y);
+  context.lineTo(x + width - radius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + radius);
+  context.lineTo(x + width, y + height - radius);
+  context.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  context.lineTo(x + radius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - radius);
+  context.lineTo(x, y + radius);
+  context.quadraticCurveTo(x, y, x + radius, y);
+  context.closePath();
 }
