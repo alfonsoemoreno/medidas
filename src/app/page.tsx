@@ -19,6 +19,11 @@ type SaveFileHandle = {
   }>;
 };
 
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
+
 type Point = {
   x: number;
   y: number;
@@ -314,6 +319,9 @@ export default function Home() {
   const [labelSize, setLabelSize] = useState(1);
   const [lineSize, setLineSize] = useState(1);
   const [scaleSize, setScaleSize] = useState(1);
+  const [isOffline, setIsOffline] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isInstalled, setIsInstalled] = useState(false);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -336,6 +344,60 @@ export default function Home() {
     }, 0);
 
     return () => window.clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
+    setIsOffline(!navigator.onLine);
+
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(display-mode: standalone)");
+    const handleInstalled = () => {
+      setIsInstalled(true);
+      setInstallPrompt(null);
+    };
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    const syncInstalledState = () => {
+      setIsInstalled(mediaQuery.matches || (window.navigator as Navigator & { standalone?: boolean }).standalone === true);
+    };
+
+    syncInstalledState();
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleInstalled);
+    mediaQuery.addEventListener("change", syncInstalledState);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
+      mediaQuery.removeEventListener("change", syncInstalledState);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "production" || !("serviceWorker" in navigator)) {
+      return;
+    }
+
+    navigator.serviceWorker.register("/sw.js", {
+      scope: "/",
+      updateViaCache: "none",
+    }).catch(() => {
+      // Ignore registration failures; the app should remain usable online.
+    });
   }, []);
 
   useEffect(() => {
@@ -795,6 +857,21 @@ export default function Home() {
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   }
 
+  async function installApp() {
+    if (!installPrompt) {
+      return;
+    }
+
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+
+    if (choice.outcome === "accepted") {
+      setIsInstalled(true);
+    }
+
+    setInstallPrompt(null);
+  }
+
   const draftCalibrationPixels =
     calibrationDraft.length === 2 ? distanceBetween(calibrationDraft[0], calibrationDraft[1]) : 0;
   const displayScale = fitScale * zoom;
@@ -846,6 +923,16 @@ export default function Home() {
               <button className={styles.primaryButton} onClick={openFilePicker}>
                 {imageAsset ? "Cambiar imagen" : "Subir imagen"}
               </button>
+              {installPrompt && !isInstalled ? (
+                <button className={styles.secondaryButton} onClick={installApp}>
+                  Instalar app
+                </button>
+              ) : null}
+              <p className={styles.installHint}>
+                {isInstalled
+                  ? "Instalada. Tras la primera carga, puede funcionar sin conexión."
+                  : "Ábrela una vez con internet y luego podrás usarla sin conexión."}
+              </p>
             </div>
 
             <div className={styles.block}>
@@ -1021,6 +1108,9 @@ export default function Home() {
           <section className={styles.viewerColumn}>
             <div className={styles.viewerTopbar}>
               <div className={styles.statusCluster}>
+                <span className={isOffline ? styles.statusOffline : styles.statusOnline}>
+                  {isOffline ? "Sin conexión" : "En línea"}
+                </span>
                 <span>{imageAsset?.name ?? "Sin imagen"}</span>
                 {imageAsset ? <span>{imageAsset.width} x {imageAsset.height}</span> : null}
               </div>

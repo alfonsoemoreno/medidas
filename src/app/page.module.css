@@ -99,6 +99,19 @@
   width: 100%;
 }
 
+.brandPanel .secondaryButton {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.installHint {
+  margin-top: 12px;
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .block,
 .viewerTopbar,
 .viewer,
@@ -337,6 +350,16 @@
   color: var(--brand-700);
   font-size: 0.86rem;
   font-weight: 600;
+}
+
+.statusCluster .statusOnline {
+  background: rgba(31, 125, 92, 0.12);
+  color: #176c51;
+}
+
+.statusCluster .statusOffline {
+  background: rgba(161, 48, 48, 0.12);
+  color: #8d2230;
 }
 
 .zoomButton {

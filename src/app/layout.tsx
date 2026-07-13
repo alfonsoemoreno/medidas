@@ -16,6 +16,7 @@ const mono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "Escala y Medición",
   description: "Calibración y medición en imágenes de microscopio con una interfaz clara y práctica.",
+  applicationName: "Escala y Medición",
 };
 
 export default function RootLayout({
