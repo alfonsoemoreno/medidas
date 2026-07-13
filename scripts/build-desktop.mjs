@@ -1,10 +1,13 @@
 import { spawn } from "node:child_process";
 
+const isWindows = process.platform === "win32";
+
 const child = spawn(
-  process.platform === "win32" ? "npx.cmd" : "npx",
+  isWindows ? "npx" : "npx",
   ["next", "build", "--webpack"],
   {
     stdio: "inherit",
+    shell: isWindows,
     env: {
       ...process.env,
       DESKTOP_BUILD: "true",
