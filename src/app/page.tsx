@@ -1076,7 +1076,8 @@ function drawScaleBar(
   metrics: AnnotationMetrics,
 ) {
   const x = 26;
-  const y = imageHeight - 26;
+  const bottomMargin = Math.max(28, metrics.scaleBarTickHeight + metrics.scaleBarThickness + 10);
+  const y = imageHeight - bottomMargin;
   const labelPaddingX = metrics.scaleBarLabelPaddingX;
   const labelPaddingY = metrics.scaleBarLabelPaddingY;
   const labelHeight = metrics.scaleBarLabelFontSize + labelPaddingY * 2;
