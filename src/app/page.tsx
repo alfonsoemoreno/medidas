@@ -73,15 +73,28 @@ type AnnotationMetrics = {
   pointRadius: number;
   pointHaloRadius: number;
   labelOffset: number;
-  labelWidth: number;
   labelHeight: number;
   labelRadius: number;
   labelFontSize: number;
+  labelPaddingX: number;
+  labelPaddingY: number;
+  labelMinWidth: number;
   scaleBarThickness: number;
   scaleBarTickHeight: number;
   scaleBarLabelFontSize: number;
   scaleBarLabelPaddingX: number;
   scaleBarLabelPaddingY: number;
+};
+
+type OverlayScaleMetrics = {
+  scaleBarThickness: number;
+  scaleBarTickHeight: number;
+  scaleBarLabelFontSize: number;
+  scaleBarLabelPaddingX: number;
+  scaleBarLabelPaddingY: number;
+  scaleBarMarginX: number;
+  scaleBarMarginBottom: number;
+  scaleBarLabelGap: number;
 };
 
 const TOOL_LABELS: Record<ToolMode, string> = {
@@ -93,6 +106,20 @@ const TOOL_LABELS: Record<ToolMode, string> = {
 const MEASUREMENT_COLORS = ["#fc6f59", "#ffb347", "#4cd7b2", "#6cb8ff", "#ffe27a"];
 const SAVED_CALIBRATIONS_KEY = "medidas.saved-calibrations";
 const LAST_CALIBRATION_KEY = "medidas.last-calibration";
+
+function ZoomIcon({ type }: { type: "in" | "out" }) {
+  return (
+    <svg
+      className={styles.zoomIcon}
+      viewBox="0 0 20 20"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M5 10h10" />
+      {type === "in" ? <path d="M10 5v10" /> : null}
+    </svg>
+  );
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
@@ -183,33 +210,48 @@ function createAnnotationMetrics(
   displayScale = 1,
 ): AnnotationMetrics {
   const normalizedScale = Math.max(displayScale, 0.08);
-  const base = clamp(1 / Math.sqrt(normalizedScale), 0.72, 3.4);
+  const toImageSpace = (screenPixels: number, factor: number, min: number, max: number) =>
+    clamp((screenPixels * factor) / normalizedScale, min, max);
 
   return {
-    lineWidth: Math.max(0.8, 2.2 * base * multiplier.lines),
-    pointRadius: Math.max(1.8, 4.2 * base * multiplier.lines),
-    pointHaloRadius: Math.max(3.5, 8.4 * base * multiplier.lines),
-    labelOffset: Math.max(8, 22 * base * multiplier.labels),
-    labelWidth: Math.max(52, 136 * base * multiplier.labels),
-    labelHeight: Math.max(18, 30 * base * multiplier.labels),
-    labelRadius: Math.max(8, 14 * base * multiplier.labels),
-    labelFontSize: Math.max(7, 11.5 * base * multiplier.labels),
-    scaleBarThickness: Math.max(1.5, 3.8 * base * multiplier.scale),
-    scaleBarTickHeight: Math.max(8, 16 * base * multiplier.scale),
-    scaleBarLabelFontSize: Math.max(8, 12 * base * multiplier.scale),
-    scaleBarLabelPaddingX: Math.max(5, 10 * base * multiplier.scale),
-    scaleBarLabelPaddingY: Math.max(4, 7 * base * multiplier.scale),
+    lineWidth: toImageSpace(2.2, multiplier.lines, 1, 40),
+    pointRadius: toImageSpace(4.2, multiplier.lines, 2, 56),
+    pointHaloRadius: toImageSpace(8.4, multiplier.lines, 4, 96),
+    labelOffset: toImageSpace(24, multiplier.labels, 12, 220),
+    labelHeight: toImageSpace(28, multiplier.labels, 20, 160),
+    labelRadius: toImageSpace(14, multiplier.labels, 10, 72),
+    labelFontSize: toImageSpace(11.5, multiplier.labels, 9, 88),
+    labelPaddingX: toImageSpace(11, multiplier.labels, 8, 60),
+    labelPaddingY: toImageSpace(6, multiplier.labels, 4, 36),
+    labelMinWidth: toImageSpace(84, multiplier.labels, 64, 520),
+    scaleBarThickness: toImageSpace(3.8, multiplier.scale, 1.5, 24),
+    scaleBarTickHeight: toImageSpace(16, multiplier.scale, 8, 72),
+    scaleBarLabelFontSize: toImageSpace(12, multiplier.scale, 8, 56),
+    scaleBarLabelPaddingX: toImageSpace(10, multiplier.scale, 5, 36),
+    scaleBarLabelPaddingY: toImageSpace(7, multiplier.scale, 4, 24),
   };
 }
 
-function scaleOnlyScaleMetrics(metrics: AnnotationMetrics, factor: number): AnnotationMetrics {
+function getLabelBox(label: string, metrics: AnnotationMetrics) {
+  const estimatedTextWidth = label.length * metrics.labelFontSize * 0.58;
+
   return {
-    ...metrics,
-    scaleBarThickness: metrics.scaleBarThickness * factor,
-    scaleBarTickHeight: metrics.scaleBarTickHeight * factor,
-    scaleBarLabelFontSize: metrics.scaleBarLabelFontSize * factor,
-    scaleBarLabelPaddingX: metrics.scaleBarLabelPaddingX * factor,
-    scaleBarLabelPaddingY: metrics.scaleBarLabelPaddingY * factor,
+    width: Math.max(metrics.labelMinWidth, estimatedTextWidth + metrics.labelPaddingX * 2),
+    height: metrics.labelHeight,
+    radius: Math.max(metrics.labelRadius, metrics.labelHeight / 2),
+  };
+}
+
+function createOverlayScaleMetrics(multiplier: number, scaleFactor = 1): OverlayScaleMetrics {
+  return {
+    scaleBarThickness: clamp(4 * multiplier * scaleFactor, 3, 32),
+    scaleBarTickHeight: clamp(18 * multiplier * scaleFactor, 12, 96),
+    scaleBarLabelFontSize: clamp(14 * multiplier * scaleFactor, 11, 72),
+    scaleBarLabelPaddingX: clamp(12 * multiplier * scaleFactor, 8, 56),
+    scaleBarLabelPaddingY: clamp(8 * multiplier * scaleFactor, 5, 36),
+    scaleBarMarginX: clamp(26 * scaleFactor, 18, 140),
+    scaleBarMarginBottom: clamp(26 * scaleFactor, 18, 140),
+    scaleBarLabelGap: clamp(8 * scaleFactor, 6, 36),
   };
 }
 
@@ -264,36 +306,37 @@ export default function Home() {
   const [knownDistance, setKnownDistance] = useState("100");
   const [unit, setUnit] = useState("um");
   const [calibration, setCalibration] = useState<Calibration | null>(null);
-  const [savedCalibrations, setSavedCalibrations] = useState<SavedCalibrationPreset[]>(() => {
-    if (typeof window === "undefined") {
-      return [];
-    }
-
-    try {
-      const storedPresets = window.localStorage.getItem(SAVED_CALIBRATIONS_KEY);
-      const parsed = storedPresets ? (JSON.parse(storedPresets) as SavedCalibrationPreset[]) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
-  const [lastCalibration, setLastCalibration] = useState<SavedCalibrationPreset | null>(() => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-
-    try {
-      const storedLast = window.localStorage.getItem(LAST_CALIBRATION_KEY);
-      return storedLast ? (JSON.parse(storedLast) as SavedCalibrationPreset) : null;
-    } catch {
-      return null;
-    }
-  });
+  const [savedCalibrations, setSavedCalibrations] = useState<SavedCalibrationPreset[]>([]);
+  const [lastCalibration, setLastCalibration] = useState<SavedCalibrationPreset | null>(null);
+  const [storageReady, setStorageReady] = useState(false);
   const [presetName, setPresetName] = useState("");
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
   const [labelSize, setLabelSize] = useState(1);
   const [lineSize, setLineSize] = useState(1);
   const [scaleSize, setScaleSize] = useState(1);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      try {
+        const storedPresets = window.localStorage.getItem(SAVED_CALIBRATIONS_KEY);
+        const parsedPresets = storedPresets ? (JSON.parse(storedPresets) as SavedCalibrationPreset[]) : [];
+        setSavedCalibrations(Array.isArray(parsedPresets) ? parsedPresets : []);
+      } catch {
+        setSavedCalibrations([]);
+      }
+
+      try {
+        const storedLast = window.localStorage.getItem(LAST_CALIBRATION_KEY);
+        setLastCalibration(storedLast ? (JSON.parse(storedLast) as SavedCalibrationPreset) : null);
+      } catch {
+        setLastCalibration(null);
+      }
+
+      setStorageReady(true);
+    }, 0);
+
+    return () => window.clearTimeout(timeoutId);
+  }, []);
 
   useEffect(() => {
     const element = viewportRef.current;
@@ -324,17 +367,25 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    if (!storageReady) {
+      return;
+    }
+
     window.localStorage.setItem(SAVED_CALIBRATIONS_KEY, JSON.stringify(savedCalibrations));
-  }, [savedCalibrations]);
+  }, [savedCalibrations, storageReady]);
 
   useEffect(() => {
+    if (!storageReady) {
+      return;
+    }
+
     if (!lastCalibration) {
       window.localStorage.removeItem(LAST_CALIBRATION_KEY);
       return;
     }
 
     window.localStorage.setItem(LAST_CALIBRATION_KEY, JSON.stringify(lastCalibration));
-  }, [lastCalibration]);
+  }, [lastCalibration, storageReady]);
 
   const fitScale =
     imageAsset && viewport.width > 0 && viewport.height > 0
@@ -752,14 +803,15 @@ export default function Home() {
     { labels: labelSize, lines: lineSize, scale: scaleSize },
     displayScale,
   );
+  const overlayScaleMetrics = createOverlayScaleMetrics(scaleSize);
   const exportMeasurementMetrics = createAnnotationMetrics(
     imageAsset,
     { labels: labelSize, lines: lineSize, scale: scaleSize },
     fitScale,
   );
-  const exportScaleMetrics = scaleOnlyScaleMetrics(
-    screenMetrics,
-    fitScale > 0 ? 1 / fitScale : 1,
+  const exportScaleMetrics = createOverlayScaleMetrics(
+    scaleSize,
+    displayScale > 0 ? 1 / displayScale : 1,
   );
 
   const viewerPhysicalWidth =
@@ -767,7 +819,7 @@ export default function Home() {
       ? viewport.width / (fitScale * zoom * calibration.pixelsPerUnit)
       : 0;
 
-  const scaleBarUnits = calibration ? niceScaleLength(viewerPhysicalWidth * 0.22) : 0;
+  const scaleBarUnits = calibration ? niceScaleLength(viewerPhysicalWidth * 0.16) : 0;
   const scaleBarPixels = calibration ? scaleBarUnits * calibration.pixelsPerUnit : 0;
 
   return (
@@ -783,9 +835,18 @@ export default function Home() {
       <main className={styles.shell}>
         <section className={styles.workspace}>
           <aside className={styles.sidebar}>
-            <button className={styles.primaryButton} onClick={openFilePicker}>
-              {imageAsset ? "Cambiar imagen" : "Subir imagen"}
-            </button>
+            <div className={styles.brandPanel}>
+              <div className={styles.sidebarBrand}>
+                <Image src="/icon.png" alt="Escala y Medición" width={188} height={188} priority />
+              </div>
+              <div className={styles.brandTextBlock}>
+                <strong>Escala y Medición</strong>
+                <span>Calibración profesional y medición visual para imágenes de microscopio.</span>
+              </div>
+              <button className={styles.primaryButton} onClick={openFilePicker}>
+                {imageAsset ? "Cambiar imagen" : "Subir imagen"}
+              </button>
+            </div>
 
             <div className={styles.block}>
               <div className={styles.label}>Herramienta</div>
@@ -839,12 +900,15 @@ export default function Home() {
                   Aplicar escala
                 </button>
                 <div className={styles.presetSaveRow}>
-                  <input
-                    value={presetName}
-                    onChange={(event) => setPresetName(event.target.value)}
-                    placeholder="Nombre de calibracion"
-                    disabled={!calibration}
-                  />
+                  <label className={styles.presetNameField}>
+                    <span>Nombre de calibracion</span>
+                    <input
+                      value={presetName}
+                      onChange={(event) => setPresetName(event.target.value)}
+                      placeholder="Ej. Regla 10 mm"
+                      disabled={!calibration}
+                    />
+                  </label>
                   <button className={styles.ghostButton} onClick={saveCurrentCalibration} disabled={!calibration}>
                     Guardar
                   </button>
@@ -864,7 +928,7 @@ export default function Home() {
                 <div className={styles.presetList}>
                   {savedCalibrations.map((preset) => (
                     <div key={preset.id} className={styles.presetItem}>
-                      <div>
+                      <div className={styles.presetContent}>
                         <strong>{preset.name}</strong>
                         <span>
                           {formatNumber(preset.knownDistance)} {preset.unit} · {formatPixels(preset.pixelsPerUnit)}
@@ -961,11 +1025,21 @@ export default function Home() {
                 {imageAsset ? <span>{imageAsset.width} x {imageAsset.height}</span> : null}
               </div>
               <div className={styles.statusCluster}>
-                <button className={styles.zoomButton} onClick={zoomOut} disabled={!imageAsset}>
-                  -
+                <button
+                  className={styles.zoomButton}
+                  onClick={zoomOut}
+                  disabled={!imageAsset}
+                  aria-label="Alejar"
+                >
+                  <ZoomIcon type="out" />
                 </button>
-                <button className={styles.zoomButton} onClick={zoomIn} disabled={!imageAsset}>
-                  +
+                <button
+                  className={styles.zoomButton}
+                  onClick={zoomIn}
+                  disabled={!imageAsset}
+                  aria-label="Acercar"
+                >
+                  <ZoomIcon type="in" />
                 </button>
                 <span>{Math.round(zoom * 100)}%</span>
                 {calibration ? <span>1 {calibration.unit} = {formatPixels(calibration.pixelsPerUnit)}</span> : null}
@@ -1058,16 +1132,16 @@ export default function Home() {
                       className={styles.scaleBar}
                       style={{
                         width: `${scaleBarPixels * fitScale * zoom}px`,
-                        height: `${screenMetrics.scaleBarThickness}px`,
-                        boxShadow: `0 0 0 ${Math.max(screenMetrics.scaleBarThickness / 2, 1)}px rgba(7, 11, 18, 0.28)`,
-                        ["--tick-height" as string]: `${screenMetrics.scaleBarTickHeight}px`,
-                        ["--tick-width" as string]: `${Math.max(screenMetrics.scaleBarThickness * 0.75, 2)}px`,
+                        height: `${overlayScaleMetrics.scaleBarThickness}px`,
+                        boxShadow: `0 0 0 ${Math.max(overlayScaleMetrics.scaleBarThickness / 2, 1)}px rgba(7, 11, 18, 0.28)`,
+                        ["--tick-height" as string]: `${overlayScaleMetrics.scaleBarTickHeight}px`,
+                        ["--tick-width" as string]: `${Math.max(overlayScaleMetrics.scaleBarThickness * 0.75, 2)}px`,
                       }}
                     >
                       <span
                         style={{
-                          fontSize: `${screenMetrics.scaleBarLabelFontSize}px`,
-                          padding: `${screenMetrics.scaleBarLabelPaddingY}px ${screenMetrics.scaleBarLabelPaddingX}px`,
+                          fontSize: `${overlayScaleMetrics.scaleBarLabelFontSize}px`,
+                          padding: `${overlayScaleMetrics.scaleBarLabelPaddingY}px ${overlayScaleMetrics.scaleBarLabelPaddingX}px`,
                         }}
                       >
                         {formatNumber(scaleBarUnits)} {calibration.unit}
@@ -1076,7 +1150,19 @@ export default function Home() {
                   ) : null}
                 </div>
               ) : (
-                <div className={styles.viewerEmpty}>Sube una imagen para empezar.</div>
+                <div className={styles.viewerEmpty}>
+                  <Image
+                    className={styles.viewerEmptyLogo}
+                    src="/icon.png"
+                    alt=""
+                    width={132}
+                    height={132}
+                    aria-hidden="true"
+                    priority
+                  />
+                  <strong>Sube una imagen para empezar</strong>
+                  <span>Calibra escalas, registra mediciones y exporta resultados con una vista limpia.</span>
+                </div>
               )}
             </div>
 
@@ -1094,7 +1180,7 @@ export default function Home() {
                 <div className={styles.measurementList}>
                   {measurements.map((measurement) => (
                     <div key={measurement.id} className={styles.measurementItem}>
-                      <div>
+                      <div className={styles.measurementContent}>
                         <input
                           className={styles.measurementNameInput}
                           value={measurement.name}
@@ -1153,6 +1239,7 @@ function MeasurementLine({
   metrics: AnnotationMetrics;
 }) {
   const labelPosition = lineLabelPosition(start, end, metrics.labelOffset);
+  const labelBox = getLabelBox(label, metrics);
 
   return (
     <g>
@@ -1170,11 +1257,11 @@ function MeasurementLine({
       <circle cx={end.x} cy={end.y} r={metrics.pointRadius} fill={color} />
       <g transform={`translate(${labelPosition.x} ${labelPosition.y})`}>
         <rect
-          x={-metrics.labelWidth / 2}
-          y={-metrics.labelHeight / 2}
-          width={metrics.labelWidth}
-          height={metrics.labelHeight}
-          rx={metrics.labelRadius}
+          x={-labelBox.width / 2}
+          y={-labelBox.height / 2}
+          width={labelBox.width}
+          height={labelBox.height}
+          rx={labelBox.radius}
           fill="rgba(6, 10, 17, 0.84)"
           stroke="rgba(255, 255, 255, 0.08)"
         />
@@ -1203,6 +1290,7 @@ function drawMeasurement(
   const scaledStart = { x: start.x * scale, y: start.y * scale };
   const scaledEnd = { x: end.x * scale, y: end.y * scale };
   const labelPosition = lineLabelPosition(scaledStart, scaledEnd, options.metrics.labelOffset);
+  const labelBox = getLabelBox(options.label, options.metrics);
 
   context.save();
   context.strokeStyle = options.color;
@@ -1222,16 +1310,14 @@ function drawMeasurement(
     context.fill();
   }
 
-  const labelWidth = options.metrics.labelWidth;
-  const labelHeight = options.metrics.labelHeight;
   context.fillStyle = "rgba(6, 10, 17, 0.84)";
   roundRect(
     context,
-    labelPosition.x - labelWidth / 2,
-    labelPosition.y - labelHeight / 2,
-    labelWidth,
-    labelHeight,
-    options.metrics.labelRadius,
+    labelPosition.x - labelBox.width / 2,
+    labelPosition.y - labelBox.height / 2,
+    labelBox.width,
+    labelBox.height,
+    labelBox.radius,
   );
   context.fill();
 
@@ -1249,10 +1335,10 @@ function drawScaleBar(
   imageHeight: number,
   scalePixels: number,
   label: string,
-  metrics: AnnotationMetrics,
+  metrics: OverlayScaleMetrics,
 ) {
-  const x = 26;
-  const bottomMargin = Math.max(28, metrics.scaleBarTickHeight + metrics.scaleBarThickness + 10);
+  const x = metrics.scaleBarMarginX;
+  const bottomMargin = Math.max(metrics.scaleBarMarginBottom, metrics.scaleBarTickHeight + metrics.scaleBarThickness + 10);
   const y = imageHeight - bottomMargin;
   const labelPaddingX = metrics.scaleBarLabelPaddingX;
   const labelPaddingY = metrics.scaleBarLabelPaddingY;
@@ -1264,7 +1350,7 @@ function drawScaleBar(
   const labelWidth = textWidth + labelPaddingX * 2;
   const labelRadius = Math.max(labelHeight / 2, 10);
   const barY = y;
-  const labelY = barY - metrics.scaleBarTickHeight - labelHeight - 6;
+  const labelY = barY - metrics.scaleBarTickHeight - labelHeight - metrics.scaleBarLabelGap;
 
   context.fillStyle = "rgba(7, 11, 18, 0.52)";
   roundRect(

@@ -1,5 +1,20 @@
 :root {
   color-scheme: light;
+  --bg-base: #dbe2ef;
+  --bg-soft: #f4f7fb;
+  --surface: rgba(255, 255, 255, 0.84);
+  --surface-strong: rgba(255, 255, 255, 0.9);
+  --surface-muted: rgba(17, 31, 80, 0.08);
+  --border-soft: rgba(17, 31, 80, 0.1);
+  --text-main: #0d1630;
+  --text-muted: #4d5b81;
+  --brand-700: #111f50;
+  --brand-600: #1a2b66;
+  --brand-500: #24377b;
+  --brand-400: #3f569f;
+  --brand-300: #91a4d8;
+  --brand-glow: rgba(63, 86, 159, 0.2);
+  --accent-gold: #d6deff;
 }
 
 html {
@@ -14,8 +29,8 @@ body {
 
 body {
   min-height: 100vh;
-  color: #0f1720;
-  background: #d8e2ea;
+  color: var(--text-main);
+  background: var(--bg-base);
   font-family: var(--font-jakarta), sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -42,5 +57,5 @@ img {
 }
 
 ::selection {
-  background: rgba(49, 88, 106, 0.22);
+  background: rgba(36, 55, 123, 0.18);
 }

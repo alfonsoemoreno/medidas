@@ -14,8 +14,8 @@ const mono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Microscopy Measurement Studio",
-  description: "Calibracion y medicion profesional sobre fotografias de microscopio y lupa.",
+  title: "Escala y Medición",
+  description: "Calibración y medición en imágenes de microscopio con una interfaz clara y práctica.",
 };
 
 export default function RootLayout({
