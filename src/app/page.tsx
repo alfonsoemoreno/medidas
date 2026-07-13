@@ -89,15 +89,17 @@ function distanceBetween(start: Point, end: Point) {
 }
 
 function formatNumber(value: number) {
+  let formatted = "";
+
   if (value >= 100) {
-    return value.toFixed(1);
+    formatted = value.toFixed(1);
+  } else if (value >= 10) {
+    formatted = value.toFixed(2);
+  } else {
+    formatted = value.toFixed(3);
   }
 
-  if (value >= 10) {
-    return value.toFixed(2);
-  }
-
-  return value.toFixed(3);
+  return formatted.replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
 }
 
 function formatPixels(value: number) {
@@ -131,28 +133,36 @@ function makeMeasurementName(index: number) {
 function createAnnotationMetrics(
   imageAsset: ImageAsset | null,
   multiplier: { labels: number; lines: number; scale: number },
-  mode: "screen" | "export",
   displayScale = 1,
 ): AnnotationMetrics {
-  const referenceSize = imageAsset ? Math.min(imageAsset.width, imageAsset.height) : 1600;
-  const exportBase = clamp(referenceSize / 900, 0.9, 2.8);
-  const screenBase = clamp(1 / Math.max(displayScale, 0.18), 1, 7.5);
-  const base = mode === "export" ? exportBase : screenBase;
+  const normalizedScale = Math.max(displayScale, 0.08);
+  const base = clamp(1 / Math.sqrt(normalizedScale), 0.72, 3.4);
 
   return {
-    lineWidth: clamp(2.4 * base * multiplier.lines, 1.5, 18),
-    pointRadius: clamp(4.5 * base * multiplier.lines, 3, 26),
-    pointHaloRadius: clamp(9 * base * multiplier.lines, 6, 40),
-    labelOffset: clamp(24 * base * multiplier.labels, 14, 100),
-    labelWidth: clamp(148 * base * multiplier.labels, 96, 420),
-    labelHeight: clamp(32 * base * multiplier.labels, 24, 96),
-    labelRadius: clamp(16 * base * multiplier.labels, 12, 42),
-    labelFontSize: clamp(12 * base * multiplier.labels, 10, 42),
-    scaleBarThickness: clamp(4 * base * multiplier.scale, 2, 18),
-    scaleBarTickHeight: clamp(18 * base * multiplier.scale, 10, 52),
-    scaleBarLabelFontSize: clamp(13 * base * multiplier.scale, 10, 34),
-    scaleBarLabelPaddingX: clamp(12 * base * multiplier.scale, 8, 28),
-    scaleBarLabelPaddingY: clamp(8 * base * multiplier.scale, 6, 20),
+    lineWidth: Math.max(0.8, 2.2 * base * multiplier.lines),
+    pointRadius: Math.max(1.8, 4.2 * base * multiplier.lines),
+    pointHaloRadius: Math.max(3.5, 8.4 * base * multiplier.lines),
+    labelOffset: Math.max(8, 22 * base * multiplier.labels),
+    labelWidth: Math.max(52, 136 * base * multiplier.labels),
+    labelHeight: Math.max(18, 30 * base * multiplier.labels),
+    labelRadius: Math.max(8, 14 * base * multiplier.labels),
+    labelFontSize: Math.max(7, 11.5 * base * multiplier.labels),
+    scaleBarThickness: Math.max(1.5, 3.8 * base * multiplier.scale),
+    scaleBarTickHeight: Math.max(8, 16 * base * multiplier.scale),
+    scaleBarLabelFontSize: Math.max(8, 12 * base * multiplier.scale),
+    scaleBarLabelPaddingX: Math.max(5, 10 * base * multiplier.scale),
+    scaleBarLabelPaddingY: Math.max(4, 7 * base * multiplier.scale),
+  };
+}
+
+function scaleOnlyScaleMetrics(metrics: AnnotationMetrics, factor: number): AnnotationMetrics {
+  return {
+    ...metrics,
+    scaleBarThickness: metrics.scaleBarThickness * factor,
+    scaleBarTickHeight: metrics.scaleBarTickHeight * factor,
+    scaleBarLabelFontSize: metrics.scaleBarLabelFontSize * factor,
+    scaleBarLabelPaddingX: metrics.scaleBarLabelPaddingX * factor,
+    scaleBarLabelPaddingY: metrics.scaleBarLabelPaddingY * factor,
   };
 }
 
@@ -499,6 +509,19 @@ export default function Home() {
     setMeasurements((current) => current.filter((measurement) => measurement.id !== id));
   }
 
+  function updateMeasurementName(id: string, name: string) {
+    setMeasurements((current) =>
+      current.map((measurement) =>
+        measurement.id === id
+          ? {
+              ...measurement,
+              name,
+            }
+          : measurement,
+      ),
+    );
+  }
+
   async function exportAnnotatedImage(format: "png" | "jpeg") {
     if (!imageAsset) {
       return;
@@ -512,9 +535,15 @@ export default function Home() {
       image.onerror = () => reject(new Error("No se pudo cargar la imagen para exportar."));
     });
 
+    const exportScale = 1;
+    const exportWidth = imageAsset.width;
+    const exportHeight = imageAsset.height;
+    const exportScaleBarUnits = scaleBarUnits;
+    const exportScaleBarWidth = scaleBarPixels;
+
     const canvas = document.createElement("canvas");
-    canvas.width = imageAsset.width;
-    canvas.height = imageAsset.height;
+    canvas.width = exportWidth;
+    canvas.height = exportHeight;
 
     const context = canvas.getContext("2d");
 
@@ -522,18 +551,28 @@ export default function Home() {
       return;
     }
 
-    context.drawImage(image, 0, 0, imageAsset.width, imageAsset.height);
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(image, 0, 0, exportWidth, exportHeight);
 
     for (const measurement of measurements) {
       drawMeasurement(context, measurement.start, measurement.end, {
         label: `${measurement.name} - ${formatNumber(measurement.value)} ${measurement.unit}`,
         color: measurement.color,
-        metrics: exportMetrics,
+        metrics: exportMeasurementMetrics,
+        scale: exportScale,
       });
     }
 
-    if (showScaleBar && calibration) {
-      drawScaleBar(context, imageAsset.width, imageAsset.height, calibration, exportMetrics);
+    if (showScaleBar && calibration && exportScaleBarWidth > 0) {
+      drawScaleBar(
+        context,
+        exportWidth,
+        exportHeight,
+        exportScaleBarWidth,
+        `${formatNumber(exportScaleBarUnits)} ${calibration.unit}`,
+        exportScaleMetrics,
+      );
     }
 
     const baseName = imageAsset.name.replace(/\.[^.]+$/, "");
@@ -584,13 +623,16 @@ export default function Home() {
   const screenMetrics = createAnnotationMetrics(
     imageAsset,
     { labels: labelSize, lines: lineSize, scale: scaleSize },
-    "screen",
     displayScale,
   );
-  const exportMetrics = createAnnotationMetrics(
+  const exportMeasurementMetrics = createAnnotationMetrics(
     imageAsset,
     { labels: labelSize, lines: lineSize, scale: scaleSize },
-    "export",
+    fitScale,
+  );
+  const exportScaleMetrics = scaleOnlyScaleMetrics(
+    screenMetrics,
+    fitScale > 0 ? 1 / fitScale : 1,
   );
 
   const viewerPhysicalWidth =
@@ -700,8 +742,8 @@ export default function Home() {
                   <span>Etiquetas</span>
                   <input
                     type="range"
-                    min="0.6"
-                    max="2.4"
+                    min="0.2"
+                    max="4"
                     step="0.1"
                     value={labelSize}
                     onChange={(event) => setLabelSize(Number(event.target.value))}
@@ -712,8 +754,8 @@ export default function Home() {
                   <span>Lineas</span>
                   <input
                     type="range"
-                    min="0.6"
-                    max="2.4"
+                    min="0.2"
+                    max="4"
                     step="0.1"
                     value={lineSize}
                     onChange={(event) => setLineSize(Number(event.target.value))}
@@ -724,8 +766,8 @@ export default function Home() {
                   <span>Escala</span>
                   <input
                     type="range"
-                    min="0.6"
-                    max="2.4"
+                    min="0.2"
+                    max="4"
                     step="0.1"
                     value={scaleSize}
                     onChange={(event) => setScaleSize(Number(event.target.value))}
@@ -788,6 +830,7 @@ export default function Home() {
                     alt="Microscopy sample"
                     width={imageAsset.width}
                     height={imageAsset.height}
+                    draggable={false}
                     unoptimized
                   />
 
@@ -876,7 +919,12 @@ export default function Home() {
                   {measurements.map((measurement) => (
                     <div key={measurement.id} className={styles.measurementItem}>
                       <div>
-                        <strong>{measurement.name}</strong>
+                        <input
+                          className={styles.measurementNameInput}
+                          value={measurement.name}
+                          onChange={(event) => updateMeasurementName(measurement.id, event.target.value)}
+                          aria-label="Nombre de medicion"
+                        />
                         <span>
                           {formatNumber(measurement.value)} {measurement.unit}
                         </span>
@@ -973,9 +1021,12 @@ function drawMeasurement(
   context: CanvasRenderingContext2D,
   start: Point,
   end: Point,
-  options: { label: string; color: string; dashed?: boolean; metrics: AnnotationMetrics },
+  options: { label: string; color: string; dashed?: boolean; metrics: AnnotationMetrics; scale?: number },
 ) {
-  const labelPosition = lineLabelPosition(start, end, options.metrics.labelOffset);
+  const scale = options.scale ?? 1;
+  const scaledStart = { x: start.x * scale, y: start.y * scale };
+  const scaledEnd = { x: end.x * scale, y: end.y * scale };
+  const labelPosition = lineLabelPosition(scaledStart, scaledEnd, options.metrics.labelOffset);
 
   context.save();
   context.strokeStyle = options.color;
@@ -984,19 +1035,19 @@ function drawMeasurement(
   context.lineCap = "round";
   context.setLineDash(options.dashed ? [12, 8] : []);
   context.beginPath();
-  context.moveTo(start.x, start.y);
-  context.lineTo(end.x, end.y);
+  context.moveTo(scaledStart.x, scaledStart.y);
+  context.lineTo(scaledEnd.x, scaledEnd.y);
   context.stroke();
   context.setLineDash([]);
 
-  for (const point of [start, end]) {
+  for (const point of [scaledStart, scaledEnd]) {
     context.beginPath();
-    context.arc(point.x, point.y, options.metrics.pointRadius * 1.55, 0, Math.PI * 2);
+    context.arc(point.x, point.y, options.metrics.pointRadius, 0, Math.PI * 2);
     context.fill();
   }
 
-  const labelWidth = options.metrics.labelWidth * 1.32;
-  const labelHeight = options.metrics.labelHeight * 1.25;
+  const labelWidth = options.metrics.labelWidth;
+  const labelHeight = options.metrics.labelHeight;
   context.fillStyle = "rgba(6, 10, 17, 0.84)";
   roundRect(
     context,
@@ -1009,59 +1060,70 @@ function drawMeasurement(
   context.fill();
 
   context.fillStyle = "#f9f6ef";
-  context.font = `600 ${Math.round(options.metrics.labelFontSize * 1.35)}px sans-serif`;
+  context.font = `600 ${Math.round(options.metrics.labelFontSize)}px sans-serif`;
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.fillText(options.label, labelPosition.x, labelPosition.y + 1);
+  context.fillText(options.label, labelPosition.x, labelPosition.y + options.metrics.labelFontSize * 0.04);
   context.restore();
 }
 
 function drawScaleBar(
   context: CanvasRenderingContext2D,
-  imageWidth: number,
+  _imageWidth: number,
   imageHeight: number,
-  calibration: Calibration,
+  scalePixels: number,
+  label: string,
   metrics: AnnotationMetrics,
 ) {
-  const physicalWidth = imageWidth / calibration.pixelsPerUnit;
-  const scaleUnits = niceScaleLength(physicalWidth * 0.22);
-  const scalePixels = scaleUnits * calibration.pixelsPerUnit;
-  const x = 38;
-  const y = imageHeight - 42;
+  const x = 26;
+  const y = imageHeight - 26;
+  const labelPaddingX = metrics.scaleBarLabelPaddingX;
+  const labelPaddingY = metrics.scaleBarLabelPaddingY;
+  const labelHeight = metrics.scaleBarLabelFontSize + labelPaddingY * 2;
 
   context.save();
-  context.fillStyle = "rgba(7, 11, 18, 0.7)";
+  context.font = `600 ${Math.round(metrics.scaleBarLabelFontSize)}px sans-serif`;
+  const textWidth = context.measureText(label).width;
+  const labelWidth = textWidth + labelPaddingX * 2;
+  const labelRadius = Math.max(labelHeight / 2, 10);
+  const barY = y;
+  const labelY = barY - metrics.scaleBarTickHeight - labelHeight - 6;
+
+  context.fillStyle = "rgba(7, 11, 18, 0.52)";
   roundRect(
     context,
-    x - 16,
-    y - 38,
-    Math.max(scalePixels + 32, 170),
-    56 + metrics.scaleBarLabelPaddingY,
-    20,
+    x - 2,
+    barY + metrics.scaleBarThickness,
+    scalePixels + 4,
+    Math.max(metrics.scaleBarThickness * 1.6, 4),
+    Math.max(metrics.scaleBarThickness, 2),
   );
+  context.fill();
+
+  context.fillStyle = "rgba(7, 11, 18, 0.78)";
+  roundRect(context, x - 4, labelY, labelWidth, labelHeight, labelRadius);
   context.fill();
 
   context.strokeStyle = "#f9f6ef";
   context.lineWidth = metrics.scaleBarThickness;
   context.lineCap = "round";
   context.beginPath();
-  context.moveTo(x, y);
-  context.lineTo(x + scalePixels, y);
+  context.moveTo(x, barY);
+  context.lineTo(x + scalePixels, barY);
   context.stroke();
 
   context.lineWidth = Math.max(metrics.scaleBarThickness * 0.75, 2);
   context.beginPath();
-  context.moveTo(x, y - metrics.scaleBarTickHeight / 2);
-  context.lineTo(x, y + metrics.scaleBarTickHeight / 2);
-  context.moveTo(x + scalePixels, y - metrics.scaleBarTickHeight / 2);
-  context.lineTo(x + scalePixels, y + metrics.scaleBarTickHeight / 2);
+  context.moveTo(x, barY - metrics.scaleBarTickHeight / 2);
+  context.lineTo(x, barY + metrics.scaleBarTickHeight / 2);
+  context.moveTo(x + scalePixels, barY - metrics.scaleBarTickHeight / 2);
+  context.lineTo(x + scalePixels, barY + metrics.scaleBarTickHeight / 2);
   context.stroke();
 
   context.fillStyle = "#f9f6ef";
-  context.font = `600 ${Math.round(metrics.scaleBarLabelFontSize * 1.2)}px sans-serif`;
   context.textAlign = "left";
   context.textBaseline = "middle";
-  context.fillText(`${formatNumber(scaleUnits)} ${calibration.unit}`, x, y - metrics.scaleBarTickHeight);
+  context.fillText(label, x + labelPaddingX - 4, labelY + labelHeight / 2 + 0.5);
   context.restore();
 }
 
