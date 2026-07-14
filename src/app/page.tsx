@@ -35,7 +35,7 @@ type Point = {
   y: number;
 };
 
-type ToolMode = "navigate" | "calibrate" | "measure";
+type ToolMode = "navigate" | "calibrate" | "measure" | "area";
 
 type ImageAsset = {
   src: string;
@@ -73,6 +73,18 @@ type Measurement = {
   unit: string;
   color: string;
 };
+
+type AreaMeasurement = {
+  id: string;
+  name: string;
+  points: Point[];
+  value: number;
+  unit: string;
+  color: string;
+};
+
+type AreaDisplayUnit = "auto" | "um2" | "mm2" | "cm2" | "m2";
+type CalibrationMethod = "points" | "manual";
 
 type Viewport = {
   width: number;
@@ -112,11 +124,25 @@ const TOOL_LABELS: Record<ToolMode, string> = {
   navigate: "Mover",
   calibrate: "Calibrar",
   measure: "Medir",
+  area: "Area",
 };
 
 const MEASUREMENT_COLORS = ["#fc6f59", "#ffb347", "#4cd7b2", "#6cb8ff", "#ffe27a"];
 const SAVED_CALIBRATIONS_KEY = "medidas.saved-calibrations";
 const LAST_CALIBRATION_KEY = "medidas.last-calibration";
+const AREA_UNIT_OPTIONS: Array<{ value: AreaDisplayUnit; label: string }> = [
+  { value: "auto", label: "Auto" },
+  { value: "um2", label: "um^2" },
+  { value: "mm2", label: "mm^2" },
+  { value: "cm2", label: "cm^2" },
+  { value: "m2", label: "m^2" },
+];
+const LENGTH_UNIT_TO_METERS: Record<string, number> = {
+  um: 1e-6,
+  mm: 1e-3,
+  cm: 1e-2,
+  m: 1,
+};
 
 function ZoomIcon({ type }: { type: "in" | "out" }) {
   return (
@@ -158,6 +184,63 @@ function formatPixels(value: number) {
   return `${value.toFixed(1)} px`;
 }
 
+function formatAreaUnit(unit: string) {
+  return `${unit}^2`;
+}
+
+function normalizeLengthUnit(unit: string) {
+  const normalized = unit.trim().toLowerCase().replace("μ", "u").replace("µ", "u");
+  return normalized in LENGTH_UNIT_TO_METERS ? normalized : null;
+}
+
+function areaDisplayUnitToLengthUnit(areaUnit: Exclude<AreaDisplayUnit, "auto">) {
+  return areaUnit.replace(/2$/, "");
+}
+
+function getAreaDisplayValue(
+  value: number,
+  baseUnit: string,
+  preferredUnit: AreaDisplayUnit,
+): { value: number; unitLabel: string } {
+  const normalizedBaseUnit = normalizeLengthUnit(baseUnit);
+
+  if (!normalizedBaseUnit) {
+    return {
+      value,
+      unitLabel: formatAreaUnit(baseUnit),
+    };
+  }
+
+  const squareMeters = value * LENGTH_UNIT_TO_METERS[normalizedBaseUnit] ** 2;
+  const candidates: Array<Exclude<AreaDisplayUnit, "auto">> = ["um2", "mm2", "cm2", "m2"];
+
+  if (preferredUnit !== "auto") {
+    const targetLengthUnit = areaDisplayUnitToLengthUnit(preferredUnit);
+    return {
+      value: squareMeters / LENGTH_UNIT_TO_METERS[targetLengthUnit] ** 2,
+      unitLabel: formatAreaUnit(targetLengthUnit),
+    };
+  }
+
+  const convertedCandidates = candidates.map((candidate) => {
+    const targetLengthUnit = areaDisplayUnitToLengthUnit(candidate);
+    return {
+      candidate,
+      value: squareMeters / LENGTH_UNIT_TO_METERS[targetLengthUnit] ** 2,
+      unitLabel: formatAreaUnit(targetLengthUnit),
+    };
+  });
+
+  const readableCandidate =
+    convertedCandidates.find((candidate) => Math.abs(candidate.value) >= 0.001 && Math.abs(candidate.value) < 1000) ??
+    convertedCandidates[convertedCandidates.length - 1];
+
+  return {
+    value: readableCandidate.value,
+    unitLabel: readableCandidate.unitLabel,
+  };
+}
+
 function niceScaleLength(maxUnits: number) {
   if (maxUnits <= 0) {
     return 0;
@@ -180,6 +263,10 @@ function niceScaleLength(maxUnits: number) {
 
 function makeMeasurementName(index: number) {
   return `M${String(index + 1).padStart(2, "0")}`;
+}
+
+function makeAreaName(index: number) {
+  return `A${String(index + 1).padStart(2, "0")}`;
 }
 
 function makeCalibrationPresetName(name: string | undefined, total: number) {
@@ -289,6 +376,76 @@ function midpoint(start: Point, end: Point) {
   };
 }
 
+function polygonArea(points: Point[]) {
+  if (points.length < 3) {
+    return 0;
+  }
+
+  let sum = 0;
+
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    sum += current.x * next.y - next.x * current.y;
+  }
+
+  return Math.abs(sum) / 2;
+}
+
+function polygonCentroid(points: Point[]) {
+  if (points.length === 0) {
+    return { x: 0, y: 0 };
+  }
+
+  if (points.length < 3) {
+    const total = points.reduce(
+      (accumulator, point) => ({
+        x: accumulator.x + point.x,
+        y: accumulator.y + point.y,
+      }),
+      { x: 0, y: 0 },
+    );
+
+    return {
+      x: total.x / points.length,
+      y: total.y / points.length,
+    };
+  }
+
+  let twiceArea = 0;
+  let centroidX = 0;
+  let centroidY = 0;
+
+  for (let index = 0; index < points.length; index += 1) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    const cross = current.x * next.y - next.x * current.y;
+    twiceArea += cross;
+    centroidX += (current.x + next.x) * cross;
+    centroidY += (current.y + next.y) * cross;
+  }
+
+  if (Math.abs(twiceArea) < 0.000001) {
+    const total = points.reduce(
+      (accumulator, point) => ({
+        x: accumulator.x + point.x,
+        y: accumulator.y + point.y,
+      }),
+      { x: 0, y: 0 },
+    );
+
+    return {
+      x: total.x / points.length,
+      y: total.y / points.length,
+    };
+  }
+
+  return {
+    x: centroidX / (3 * twiceArea),
+    y: centroidY / (3 * twiceArea),
+  };
+}
+
 function lineLabelPosition(start: Point, end: Point, offset = 22) {
   const center = midpoint(start, end);
   const angle = Math.atan2(end.y - start.y, end.x - start.x);
@@ -315,7 +472,10 @@ export default function Home() {
   const [showScaleBar, setShowScaleBar] = useState(true);
   const [calibrationDraft, setCalibrationDraft] = useState<Point[]>([]);
   const [measurementDraft, setMeasurementDraft] = useState<Point | null>(null);
+  const [areaDraft, setAreaDraft] = useState<Point[]>([]);
+  const [calibrationMethod, setCalibrationMethod] = useState<CalibrationMethod>("points");
   const [knownDistance, setKnownDistance] = useState("100");
+  const [manualPixels, setManualPixels] = useState("100");
   const [unit, setUnit] = useState("um");
   const [calibration, setCalibration] = useState<Calibration | null>(null);
   const [savedCalibrations, setSavedCalibrations] = useState<SavedCalibrationPreset[]>([]);
@@ -323,6 +483,8 @@ export default function Home() {
   const [storageReady, setStorageReady] = useState(false);
   const [presetName, setPresetName] = useState("");
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
+  const [areas, setAreas] = useState<AreaMeasurement[]>([]);
+  const [areaDisplayUnit, setAreaDisplayUnit] = useState<AreaDisplayUnit>("auto");
   const [labelSize, setLabelSize] = useState(1);
   const [lineSize, setLineSize] = useState(1);
   const [scaleSize, setScaleSize] = useState(1);
@@ -577,8 +739,26 @@ export default function Home() {
     setShowScaleBar(true);
     setCalibrationDraft([]);
     setMeasurementDraft(null);
+    setAreaDraft([]);
     setCalibration(null);
     setMeasurements([]);
+    setAreas([]);
+  }
+
+  function setActiveTool(mode: ToolMode) {
+    setToolMode(mode);
+
+    if (mode !== "calibrate") {
+      setCalibrationDraft([]);
+    }
+
+    if (mode !== "measure") {
+      setMeasurementDraft(null);
+    }
+
+    if (mode !== "area") {
+      setAreaDraft([]);
+    }
   }
 
   function openFilePicker() {
@@ -637,20 +817,21 @@ export default function Home() {
   }
 
   function applyCalibration() {
-    if (calibrationDraft.length !== 2) {
-      return;
-    }
-
     const parsedDistance = Number(knownDistance);
-    const pixels = distanceBetween(calibrationDraft[0], calibrationDraft[1]);
+    const pixels =
+      calibrationMethod === "manual"
+        ? Number(manualPixels)
+        : calibrationDraft.length === 2
+          ? distanceBetween(calibrationDraft[0], calibrationDraft[1])
+          : 0;
 
     if (!Number.isFinite(parsedDistance) || parsedDistance <= 0 || pixels <= 0) {
       return;
     }
 
     const nextCalibration = {
-      start: calibrationDraft[0],
-      end: calibrationDraft[1],
+      start: calibrationMethod === "points" ? calibrationDraft[0] : null,
+      end: calibrationMethod === "points" ? calibrationDraft[1] : null,
       knownDistance: parsedDistance,
       unit: unit.trim() || "units",
       pixelsPerUnit: pixels / parsedDistance,
@@ -666,16 +847,20 @@ export default function Home() {
     );
 
     setMeasurementDraft(null);
+    setAreaDraft([]);
     setToolMode("measure");
   }
 
   function applySavedCalibration(preset: SavedCalibrationPreset) {
     setCalibration(applyCalibrationPresetValues(preset));
     setKnownDistance(String(preset.knownDistance));
+    setManualPixels(formatNumber(preset.pixelsPerUnit * preset.knownDistance));
     setUnit(preset.unit);
     setCalibrationDraft([]);
     setMeasurementDraft(null);
+    setAreaDraft([]);
     setShowScaleBar(true);
+    setCalibrationMethod("manual");
     setToolMode("measure");
     setLastCalibration(preset);
   }
@@ -708,13 +893,15 @@ export default function Home() {
       return;
     }
 
-    if (toolMode === "calibrate") {
+    if (toolMode === "calibrate" && calibrationMethod === "points") {
       setMeasurementDraft(null);
+      setAreaDraft([]);
       setCalibrationDraft((current) => (current.length >= 2 ? [point] : [...current, point]));
       return;
     }
 
     if (toolMode === "measure" && calibration) {
+      setAreaDraft([]);
       if (!measurementDraft) {
         setMeasurementDraft(point);
         return;
@@ -736,6 +923,12 @@ export default function Home() {
       ]);
 
       setMeasurementDraft(null);
+      return;
+    }
+
+    if (toolMode === "area" && calibration) {
+      setMeasurementDraft(null);
+      setAreaDraft((current) => [...current, point]);
     }
   }
 
@@ -882,6 +1075,7 @@ export default function Home() {
   function clearDrafts() {
     setCalibrationDraft([]);
     setMeasurementDraft(null);
+    setAreaDraft([]);
   }
 
   function removeMeasurement(id: string) {
@@ -897,6 +1091,49 @@ export default function Home() {
               name,
             }
           : measurement,
+      ),
+    );
+  }
+
+  function finishAreaDraft() {
+    if (!calibration || areaDraft.length < 3) {
+      return;
+    }
+
+    const value = polygonArea(areaDraft) / calibration.pixelsPerUnit ** 2;
+
+    setAreas((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        name: makeAreaName(current.length),
+        points: areaDraft,
+        value,
+        unit: calibration.unit,
+        color: MEASUREMENT_COLORS[current.length % MEASUREMENT_COLORS.length],
+      },
+    ]);
+
+    setAreaDraft([]);
+  }
+
+  function undoAreaPoint() {
+    setAreaDraft((current) => current.slice(0, -1));
+  }
+
+  function removeArea(id: string) {
+    setAreas((current) => current.filter((area) => area.id !== id));
+  }
+
+  function updateAreaName(id: string, name: string) {
+    setAreas((current) =>
+      current.map((area) =>
+        area.id === id
+          ? {
+              ...area,
+              name,
+            }
+          : area,
       ),
     );
   }
@@ -933,6 +1170,16 @@ export default function Home() {
     context.imageSmoothingEnabled = true;
     context.imageSmoothingQuality = "high";
     context.drawImage(image, 0, 0, exportWidth, exportHeight);
+
+    for (const area of areas) {
+      const displayArea = getAreaDisplayValue(area.value, area.unit, areaDisplayUnit);
+      drawArea(context, area.points, {
+        label: `${area.name} - ${formatNumber(displayArea.value)} ${displayArea.unitLabel}`,
+        color: area.color,
+        metrics: exportMeasurementMetrics,
+        scale: exportScale,
+      });
+    }
 
     for (const measurement of measurements) {
       drawMeasurement(context, measurement.start, measurement.end, {
@@ -1013,6 +1260,15 @@ export default function Home() {
 
   const draftCalibrationPixels =
     calibrationDraft.length === 2 ? distanceBetween(calibrationDraft[0], calibrationDraft[1]) : 0;
+  const draftAreaPixels = polygonArea(areaDraft);
+  const draftAreaValue = calibration ? draftAreaPixels / calibration.pixelsPerUnit ** 2 : 0;
+  const draftAreaDisplay = calibration
+    ? getAreaDisplayValue(draftAreaValue, calibration.unit, areaDisplayUnit)
+    : null;
+  const displayedAreas = areas.map((area) => ({
+    ...area,
+    display: getAreaDisplayValue(area.value, area.unit, areaDisplayUnit),
+  }));
   const displayScale = fitScale * zoom;
   const screenMetrics = createAnnotationMetrics(
     imageAsset,
@@ -1057,7 +1313,7 @@ export default function Home() {
               </div>
               <div className={styles.brandTextBlock}>
                 <strong>Escala y Medición</strong>
-                <span>Calibración profesional y medición visual para imágenes de microscopio.</span>
+                <span>Calibración profesional, medición visual y cálculo de áreas para imágenes de microscopio.</span>
               </div>
               <button className={styles.primaryButton} onClick={openFilePicker}>
                 {imageAsset ? "Cambiar imagen" : "Subir imagen"}
@@ -1077,37 +1333,126 @@ export default function Home() {
             <div className={styles.block}>
               <div className={styles.label}>Herramienta</div>
               <div className={styles.toolGrid}>
-                {(["navigate", "calibrate", "measure"] as ToolMode[]).map((mode) => (
+                {(["navigate", "calibrate", "measure", "area"] as ToolMode[]).map((mode) => (
                   <button
                     key={mode}
                     className={mode === toolMode ? styles.toolButtonActive : styles.toolButton}
-                    onClick={() => setToolMode(mode)}
-                    disabled={mode === "measure" && !calibration}
+                    onClick={() => setActiveTool(mode)}
+                    disabled={(mode === "measure" || mode === "area") && !calibration}
                   >
                     {TOOL_LABELS[mode]}
                   </button>
                 ))}
               </div>
+              {toolMode === "area" ? (
+                <div className={styles.toolActions}>
+                  <label className={styles.selectField}>
+                    <span>Mostrar areas en</span>
+                    <select value={areaDisplayUnit} onChange={(event) => setAreaDisplayUnit(event.target.value as AreaDisplayUnit)}>
+                      {AREA_UNIT_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <div className={styles.metaRow}>
+                    <span>Vertices area</span>
+                    <strong>{areaDraft.length}</strong>
+                  </div>
+                  <div className={styles.metaRow}>
+                    <span>Area actual</span>
+                    <strong>
+                      {draftAreaPixels && draftAreaDisplay ? `${formatNumber(draftAreaDisplay.value)} ${draftAreaDisplay.unitLabel}` : "-"}
+                    </strong>
+                  </div>
+                  <div className={styles.buttonStack}>
+                    <button className={styles.ghostButton} onClick={undoAreaPoint} disabled={areaDraft.length === 0}>
+                      Deshacer punto area
+                    </button>
+                    <button
+                      className={styles.secondaryButton}
+                      onClick={finishAreaDraft}
+                      disabled={areaDraft.length < 3 || !calibration}
+                    >
+                      Cerrar area
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             <div className={styles.block}>
               <div className={styles.label}>Calibracion</div>
-              <div className={styles.formRow}>
-                <input
-                  value={knownDistance}
-                  onChange={(event) => setKnownDistance(event.target.value)}
-                  inputMode="decimal"
-                  placeholder="Distancia"
-                />
-                <input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="Unidad" />
+              <div className={styles.toolGrid}>
+                {(["points", "manual"] as CalibrationMethod[]).map((method) => (
+                  <button
+                    key={method}
+                    className={method === calibrationMethod ? styles.toolButtonActive : styles.toolButton}
+                    onClick={() => {
+                      setCalibrationMethod(method);
+                      setCalibrationDraft([]);
+                    }}
+                  >
+                    {method === "points" ? "Con puntos" : "Manual"}
+                  </button>
+                ))}
               </div>
+              {calibrationMethod === "manual" ? (
+                <>
+                  <div className={styles.manualEquation}>
+                    <label className={styles.selectField}>
+                      <span>Pixeles</span>
+                      <input
+                        value={manualPixels}
+                        onChange={(event) => setManualPixels(event.target.value)}
+                        inputMode="decimal"
+                        placeholder="Ej. 250"
+                      />
+                    </label>
+                    <div className={styles.equationSign}>=</div>
+                    <label className={styles.selectField}>
+                      <span>Medida real</span>
+                      <input
+                        value={knownDistance}
+                        onChange={(event) => setKnownDistance(event.target.value)}
+                        inputMode="decimal"
+                        placeholder="Ej. 100"
+                      />
+                    </label>
+                    <label className={styles.selectField}>
+                      <span>Unidad</span>
+                      <input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="um" />
+                    </label>
+                  </div>
+                  <div className={styles.helperText}>Ejemplo: `250 px = 100 um`</div>
+                </>
+              ) : (
+                <div className={styles.formRow}>
+                  <input
+                    value={knownDistance}
+                    onChange={(event) => setKnownDistance(event.target.value)}
+                    inputMode="decimal"
+                    placeholder="Distancia"
+                  />
+                  <input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="Unidad" />
+                </div>
+              )}
               <div className={styles.metaRow}>
-                <span>Puntos</span>
-                <strong>{calibrationDraft.length}/2</strong>
+                <span>{calibrationMethod === "points" ? "Puntos" : "Modo"}</span>
+                <strong>{calibrationMethod === "points" ? `${calibrationDraft.length}/2` : "Manual"}</strong>
               </div>
               <div className={styles.metaRow}>
                 <span>Pixels</span>
-                <strong>{draftCalibrationPixels ? formatPixels(draftCalibrationPixels) : "-"}</strong>
+                <strong>
+                  {calibrationMethod === "manual"
+                    ? Number.isFinite(Number(manualPixels)) && Number(manualPixels) > 0
+                      ? formatPixels(Number(manualPixels))
+                      : "-"
+                    : draftCalibrationPixels
+                      ? formatPixels(draftCalibrationPixels)
+                      : "-"}
+                </strong>
               </div>
               {calibration ? (
                 <div className={styles.metaRow}>
@@ -1121,7 +1466,11 @@ export default function Home() {
                 <button
                   className={styles.secondaryButton}
                   onClick={applyCalibration}
-                  disabled={calibrationDraft.length !== 2}
+                  disabled={
+                    calibrationMethod === "manual"
+                      ? !Number.isFinite(Number(manualPixels)) || Number(manualPixels) <= 0
+                      : calibrationDraft.length !== 2
+                  }
                 >
                   Aplicar escala
                 </button>
@@ -1284,8 +1633,36 @@ export default function Home() {
                       />
                     ))}
 
+                    {displayedAreas.map((area) => (
+                      <AreaShape
+                        key={area.id}
+                        points={area.points}
+                        label={`${area.name} - ${formatNumber(area.display.value)} ${area.display.unitLabel}`}
+                        color={area.color}
+                        metrics={screenMetrics}
+                      />
+                    ))}
+
+                    {areaDraft.length >= 2 && (
+                      <AreaShape
+                        points={areaDraft}
+                        label={
+                          areaDraft.length >= 3 && draftAreaDisplay
+                            ? `${formatNumber(draftAreaDisplay.value)} ${draftAreaDisplay.unitLabel}`
+                            : `${areaDraft.length} puntos`
+                        }
+                        color="#4cd7b2"
+                        metrics={screenMetrics}
+                        open
+                      />
+                    )}
+
                     {measurementDraft && (
                       <PointHandle point={measurementDraft} color="#ffb347" metrics={screenMetrics} />
+                    )}
+
+                    {areaDraft.length === 1 && (
+                      <PointHandle point={areaDraft[0]} color="#4cd7b2" metrics={screenMetrics} />
                     )}
                   </svg>
 
@@ -1323,7 +1700,7 @@ export default function Home() {
                     priority
                   />
                   <strong>Sube una imagen para empezar</strong>
-                  <span>Calibra escalas, registra mediciones y exporta resultados con una vista limpia.</span>
+                  <span>Calibra escalas, registra mediciones, calcula areas y exporta resultados con una vista limpia.</span>
                 </div>
               )}
             </div>
@@ -1332,6 +1709,7 @@ export default function Home() {
               <span>Trackpad o rueda sobre la imagen: zoom suave</span>
               <span>Modo mover: arrastrar</span>
               <span>Modo calibrar o medir: dos clics</span>
+              <span>Modo area: varios clics y luego cerrar area</span>
             </div>
           </section>
 
@@ -1433,6 +1811,32 @@ export default function Home() {
                 <div className={styles.emptyState}>Sin mediciones</div>
               )}
             </div>
+
+            <div className={styles.block}>
+              <div className={styles.label}>Areas</div>
+              {areas.length ? (
+                <div className={styles.measurementList}>
+                  {displayedAreas.map((area) => (
+                    <div key={area.id} className={styles.measurementItem}>
+                      <div className={styles.measurementContent}>
+                        <input
+                          className={styles.measurementNameInput}
+                          value={area.name}
+                          onChange={(event) => updateAreaName(area.id, event.target.value)}
+                          aria-label="Nombre de area"
+                        />
+                        <span>
+                          {formatNumber(area.display.value)} {area.display.unitLabel}
+                        </span>
+                      </div>
+                      <button onClick={() => removeArea(area.id)}>Quitar</button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={styles.emptyState}>Sin areas</div>
+              )}
+            </div>
           </aside>
         </section>
       </main>
@@ -1514,6 +1918,70 @@ function MeasurementLine({
   );
 }
 
+function AreaShape({
+  points,
+  label,
+  color,
+  metrics,
+  open = false,
+}: {
+  points: Point[];
+  label: string;
+  color: string;
+  metrics: AnnotationMetrics;
+  open?: boolean;
+}) {
+  if (points.length === 0) {
+    return null;
+  }
+
+  const path = points
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
+    .join(" ");
+  const finalPath = open ? path : `${path} Z`;
+  const labelPosition = polygonCentroid(points);
+  const labelBox = getLabelBox(label, metrics);
+
+  return (
+    <g>
+      <path
+        d={finalPath}
+        fill={open ? "transparent" : color}
+        fillOpacity={open ? 0 : 0.16}
+        stroke={color}
+        strokeWidth={metrics.lineWidth}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        strokeDasharray={open ? "8 6" : "0"}
+      />
+      {points.map((point, index) => (
+        <circle key={`${point.x}-${point.y}-${index}`} cx={point.x} cy={point.y} r={metrics.pointRadius} fill={color} />
+      ))}
+      <g transform={`translate(${labelPosition.x} ${labelPosition.y})`}>
+        <rect
+          x={-labelBox.width / 2}
+          y={-labelBox.height / 2}
+          width={labelBox.width}
+          height={labelBox.height}
+          rx={labelBox.radius}
+          fill="rgba(6, 10, 17, 0.84)"
+          stroke="rgba(255, 255, 255, 0.08)"
+        />
+        <text
+          x="0"
+          y={metrics.labelFontSize * 0.33}
+          textAnchor="middle"
+          fill="#f9f6ef"
+          fontSize={metrics.labelFontSize}
+          fontWeight="600"
+        >
+          {label}
+        </text>
+      </g>
+    </g>
+  );
+}
+
 function drawMeasurement(
   context: CanvasRenderingContext2D,
   start: Point,
@@ -1539,6 +2007,64 @@ function drawMeasurement(
   context.setLineDash([]);
 
   for (const point of [scaledStart, scaledEnd]) {
+    context.beginPath();
+    context.arc(point.x, point.y, options.metrics.pointRadius, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  context.fillStyle = "rgba(6, 10, 17, 0.84)";
+  roundRect(
+    context,
+    labelPosition.x - labelBox.width / 2,
+    labelPosition.y - labelBox.height / 2,
+    labelBox.width,
+    labelBox.height,
+    labelBox.radius,
+  );
+  context.fill();
+
+  context.fillStyle = "#f9f6ef";
+  context.font = `600 ${Math.round(options.metrics.labelFontSize)}px sans-serif`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(options.label, labelPosition.x, labelPosition.y + options.metrics.labelFontSize * 0.04);
+  context.restore();
+}
+
+function drawArea(
+  context: CanvasRenderingContext2D,
+  points: Point[],
+  options: { label: string; color: string; metrics: AnnotationMetrics; scale?: number },
+) {
+  if (points.length === 0) {
+    return;
+  }
+
+  const scale = options.scale ?? 1;
+  const scaledPoints = points.map((point) => ({ x: point.x * scale, y: point.y * scale }));
+  const labelPosition = polygonCentroid(scaledPoints);
+  const labelBox = getLabelBox(options.label, options.metrics);
+
+  context.save();
+  context.strokeStyle = options.color;
+  context.fillStyle = options.color;
+  context.lineWidth = options.metrics.lineWidth;
+  context.lineJoin = "round";
+  context.lineCap = "round";
+  context.globalAlpha = 0.16;
+  context.beginPath();
+  context.moveTo(scaledPoints[0].x, scaledPoints[0].y);
+
+  for (let index = 1; index < scaledPoints.length; index += 1) {
+    context.lineTo(scaledPoints[index].x, scaledPoints[index].y);
+  }
+
+  context.closePath();
+  context.fill();
+  context.globalAlpha = 1;
+  context.stroke();
+
+  for (const point of scaledPoints) {
     context.beginPath();
     context.arc(point.x, point.y, options.metrics.pointRadius, 0, Math.PI * 2);
     context.fill();
