@@ -215,6 +215,10 @@
   gap: 10px;
 }
 
+.calibrationModes {
+  margin-bottom: 18px;
+}
+
 .toolActions {
   display: flex;
   flex-direction: column;
@@ -261,6 +265,10 @@
   gap: 10px;
 }
 
+.calibrationInputs {
+  margin-top: 2px;
+}
+
 .formRow input {
   width: 100%;
   min-height: 48px;
@@ -290,7 +298,7 @@
   grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 92px;
   gap: 10px;
   align-items: end;
-  margin-top: 12px;
+  margin-top: 4px;
 }
 
 .equationSign {
@@ -773,6 +781,19 @@
   color: #64748b;
   font-size: 0.98rem;
   line-height: 1.35;
+}
+
+.measurementSelect {
+  width: 100%;
+  min-height: 42px;
+  margin-top: 10px;
+  padding: 0 12px;
+  border: 1px solid rgba(17, 31, 80, 0.08);
+  border-radius: 14px;
+  background: var(--surface-strong);
+  color: var(--brand-700);
+  font: inherit;
+  box-shadow: inset 0 1px 3px rgba(17, 31, 80, 0.03);
 }
 
 .measurementItem button {

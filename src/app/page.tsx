@@ -72,7 +72,14 @@ type Measurement = {
   value: number;
   unit: string;
   color: string;
+  labelPosition: MeasurementLabelPosition;
+  labelOrientation: MeasurementLabelOrientation;
+  endCap: MeasurementEndCap;
 };
+
+type MeasurementLabelPosition = "left" | "center" | "right";
+type MeasurementLabelOrientation = "horizontal" | "aligned";
+type MeasurementEndCap = "circle" | "tick";
 
 type AreaMeasurement = {
   id: string;
@@ -127,6 +134,13 @@ const TOOL_LABELS: Record<ToolMode, string> = {
   area: "Area",
 };
 
+const TOOL_HINTS: Record<ToolMode, string> = {
+  navigate: "Arrastra para recorrer la imagen.",
+  calibrate: "Define la escala con 2 puntos o con equivalencia manual.",
+  measure: "Haz 2 clics para medir una distancia.",
+  area: "Marca vertices y luego pulsa \"Cerrar area\".",
+};
+
 const MEASUREMENT_COLORS = ["#fc6f59", "#ffb347", "#4cd7b2", "#6cb8ff", "#ffe27a"];
 const SAVED_CALIBRATIONS_KEY = "medidas.saved-calibrations";
 const LAST_CALIBRATION_KEY = "medidas.last-calibration";
@@ -143,6 +157,19 @@ const LENGTH_UNIT_TO_METERS: Record<string, number> = {
   cm: 1e-2,
   m: 1,
 };
+const MEASUREMENT_LABEL_OPTIONS: Array<{ value: MeasurementLabelPosition; label: string }> = [
+  { value: "left", label: "Izquierda" },
+  { value: "center", label: "Centro" },
+  { value: "right", label: "Derecha" },
+];
+const MEASUREMENT_ORIENTATION_OPTIONS: Array<{ value: MeasurementLabelOrientation; label: string }> = [
+  { value: "horizontal", label: "Horizontal" },
+  { value: "aligned", label: "Seguir linea" },
+];
+const MEASUREMENT_END_CAP_OPTIONS: Array<{ value: MeasurementEndCap; label: string }> = [
+  { value: "circle", label: "Circulo" },
+  { value: "tick", label: "Linea" },
+];
 
 function ZoomIcon({ type }: { type: "in" | "out" }) {
   return (
@@ -446,14 +473,22 @@ function polygonCentroid(points: Point[]) {
   };
 }
 
-function lineLabelPosition(start: Point, end: Point, offset = 22) {
-  const center = midpoint(start, end);
+function lineLabelPosition(start: Point, end: Point, offset = 22, position: MeasurementLabelPosition = "center") {
+  const factor = position === "left" ? 0.24 : position === "right" ? 0.76 : 0.5;
+  const center = {
+    x: start.x + (end.x - start.x) * factor,
+    y: start.y + (end.y - start.y) * factor,
+  };
   const angle = Math.atan2(end.y - start.y, end.x - start.x);
 
   return {
     x: center.x + Math.sin(angle) * offset,
     y: center.y - Math.cos(angle) * offset,
   };
+}
+
+function lineAngle(start: Point, end: Point) {
+  return Math.atan2(end.y - start.y, end.x - start.x);
 }
 
 export default function Home() {
@@ -919,6 +954,9 @@ export default function Home() {
           value,
           unit: calibration.unit,
           color: MEASUREMENT_COLORS[current.length % MEASUREMENT_COLORS.length],
+          labelPosition: "center",
+          labelOrientation: "horizontal",
+          endCap: "circle",
         },
       ]);
 
@@ -1095,6 +1133,45 @@ export default function Home() {
     );
   }
 
+  function updateMeasurementLabelPosition(id: string, labelPosition: MeasurementLabelPosition) {
+    setMeasurements((current) =>
+      current.map((measurement) =>
+        measurement.id === id
+          ? {
+              ...measurement,
+              labelPosition,
+            }
+          : measurement,
+      ),
+    );
+  }
+
+  function updateMeasurementLabelOrientation(id: string, labelOrientation: MeasurementLabelOrientation) {
+    setMeasurements((current) =>
+      current.map((measurement) =>
+        measurement.id === id
+          ? {
+              ...measurement,
+              labelOrientation,
+            }
+          : measurement,
+      ),
+    );
+  }
+
+  function updateMeasurementEndCap(id: string, endCap: MeasurementEndCap) {
+    setMeasurements((current) =>
+      current.map((measurement) =>
+        measurement.id === id
+          ? {
+              ...measurement,
+              endCap,
+            }
+          : measurement,
+      ),
+    );
+  }
+
   function finishAreaDraft() {
     if (!calibration || areaDraft.length < 3) {
       return;
@@ -1187,6 +1264,9 @@ export default function Home() {
         color: measurement.color,
         metrics: exportMeasurementMetrics,
         scale: exportScale,
+        labelPosition: measurement.labelPosition,
+        labelOrientation: measurement.labelOrientation,
+        endCap: measurement.endCap,
       });
     }
 
@@ -1293,6 +1373,13 @@ export default function Home() {
 
   const scaleBarUnits = calibration ? niceScaleLength(viewerPhysicalWidth * 0.16) : 0;
   const scaleBarPixels = calibration ? scaleBarUnits * calibration.pixelsPerUnit : 0;
+  const viewerHintItems = [
+    calibration ? `Escala: ${formatNumber(calibration.knownDistance)} ${calibration.unit}` : "Sin escala activa",
+    calibration ? `1 ${calibration.unit} = ${formatPixels(calibration.pixelsPerUnit)}` : "Calibra para medir con precision",
+    `Mediciones: ${measurements.length}`,
+    `Areas: ${areas.length}`,
+    TOOL_HINTS[toolMode],
+  ];
 
   return (
     <div className={styles.page}>
@@ -1384,7 +1471,7 @@ export default function Home() {
 
             <div className={styles.block}>
               <div className={styles.label}>Calibracion</div>
-              <div className={styles.toolGrid}>
+              <div className={`${styles.toolGrid} ${styles.calibrationModes}`}>
                 {(["points", "manual"] as CalibrationMethod[]).map((method) => (
                   <button
                     key={method}
@@ -1428,7 +1515,7 @@ export default function Home() {
                   <div className={styles.helperText}>Ejemplo: `250 px = 100 um`</div>
                 </>
               ) : (
-                <div className={styles.formRow}>
+                <div className={`${styles.formRow} ${styles.calibrationInputs}`}>
                   <input
                     value={knownDistance}
                     onChange={(event) => setKnownDistance(event.target.value)}
@@ -1630,6 +1717,9 @@ export default function Home() {
                         label={`${measurement.name} - ${formatNumber(measurement.value)} ${measurement.unit}`}
                         color={measurement.color}
                         metrics={screenMetrics}
+                        labelPosition={measurement.labelPosition}
+                        labelOrientation={measurement.labelOrientation}
+                        endCap={measurement.endCap}
                       />
                     ))}
 
@@ -1706,10 +1796,9 @@ export default function Home() {
             </div>
 
             <div className={styles.viewerHint}>
-              <span>Trackpad o rueda sobre la imagen: zoom suave</span>
-              <span>Modo mover: arrastrar</span>
-              <span>Modo calibrar o medir: dos clics</span>
-              <span>Modo area: varios clics y luego cerrar area</span>
+              {viewerHintItems.map((item) => (
+                <span key={item}>{item}</span>
+              ))}
             </div>
           </section>
 
@@ -1802,6 +1891,54 @@ export default function Home() {
                         <span>
                           {formatNumber(measurement.value)} {measurement.unit}
                         </span>
+                        <select
+                          className={styles.measurementSelect}
+                          value={measurement.labelPosition}
+                          onChange={(event) =>
+                            updateMeasurementLabelPosition(
+                              measurement.id,
+                              event.target.value as MeasurementLabelPosition,
+                            )
+                          }
+                          aria-label="Posicion de etiqueta"
+                        >
+                          {MEASUREMENT_LABEL_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          className={styles.measurementSelect}
+                          value={measurement.labelOrientation}
+                          onChange={(event) =>
+                            updateMeasurementLabelOrientation(
+                              measurement.id,
+                              event.target.value as MeasurementLabelOrientation,
+                            )
+                          }
+                          aria-label="Orientacion de etiqueta"
+                        >
+                          {MEASUREMENT_ORIENTATION_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          className={styles.measurementSelect}
+                          value={measurement.endCap}
+                          onChange={(event) =>
+                            updateMeasurementEndCap(measurement.id, event.target.value as MeasurementEndCap)
+                          }
+                          aria-label="Terminacion de medicion"
+                        >
+                          {MEASUREMENT_END_CAP_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <button onClick={() => removeMeasurement(measurement.id)}>Quitar</button>
                     </div>
@@ -1868,6 +2005,9 @@ function MeasurementLine({
   color,
   dashed = false,
   metrics,
+  labelPosition = "center",
+  labelOrientation = "horizontal",
+  endCap = "circle",
 }: {
   start: Point;
   end: Point;
@@ -1875,9 +2015,17 @@ function MeasurementLine({
   color: string;
   dashed?: boolean;
   metrics: AnnotationMetrics;
+  labelPosition?: MeasurementLabelPosition;
+  labelOrientation?: MeasurementLabelOrientation;
+  endCap?: MeasurementEndCap;
 }) {
-  const labelPosition = lineLabelPosition(start, end, metrics.labelOffset);
+  const computedLabelPosition = lineLabelPosition(start, end, metrics.labelOffset, labelPosition);
   const labelBox = getLabelBox(label, metrics);
+  const angle = lineAngle(start, end);
+  const tickLength = metrics.pointRadius * 2.2;
+  const tickDx = Math.sin(angle) * (tickLength / 2);
+  const tickDy = -Math.cos(angle) * (tickLength / 2);
+  const labelRotation = labelOrientation === "aligned" ? (angle * 180) / Math.PI : 0;
 
   return (
     <g>
@@ -1891,9 +2039,34 @@ function MeasurementLine({
         strokeLinecap="round"
         strokeDasharray={dashed ? "8 6" : "0"}
       />
-      <circle cx={start.x} cy={start.y} r={metrics.pointRadius} fill={color} />
-      <circle cx={end.x} cy={end.y} r={metrics.pointRadius} fill={color} />
-      <g transform={`translate(${labelPosition.x} ${labelPosition.y})`}>
+      {endCap === "circle" ? (
+        <>
+          <circle cx={start.x} cy={start.y} r={metrics.pointRadius} fill={color} />
+          <circle cx={end.x} cy={end.y} r={metrics.pointRadius} fill={color} />
+        </>
+      ) : (
+        <>
+          <line
+            x1={start.x - tickDx}
+            y1={start.y - tickDy}
+            x2={start.x + tickDx}
+            y2={start.y + tickDy}
+            stroke={color}
+            strokeWidth={metrics.lineWidth}
+            strokeLinecap="round"
+          />
+          <line
+            x1={end.x - tickDx}
+            y1={end.y - tickDy}
+            x2={end.x + tickDx}
+            y2={end.y + tickDy}
+            stroke={color}
+            strokeWidth={metrics.lineWidth}
+            strokeLinecap="round"
+          />
+        </>
+      )}
+      <g transform={`translate(${computedLabelPosition.x} ${computedLabelPosition.y}) rotate(${labelRotation})`}>
         <rect
           x={-labelBox.width / 2}
           y={-labelBox.height / 2}
@@ -1986,13 +2159,32 @@ function drawMeasurement(
   context: CanvasRenderingContext2D,
   start: Point,
   end: Point,
-  options: { label: string; color: string; dashed?: boolean; metrics: AnnotationMetrics; scale?: number },
+  options: {
+    label: string;
+    color: string;
+    dashed?: boolean;
+    metrics: AnnotationMetrics;
+    scale?: number;
+    labelPosition?: MeasurementLabelPosition;
+    labelOrientation?: MeasurementLabelOrientation;
+    endCap?: MeasurementEndCap;
+  },
 ) {
   const scale = options.scale ?? 1;
   const scaledStart = { x: start.x * scale, y: start.y * scale };
   const scaledEnd = { x: end.x * scale, y: end.y * scale };
-  const labelPosition = lineLabelPosition(scaledStart, scaledEnd, options.metrics.labelOffset);
+  const labelPosition = lineLabelPosition(
+    scaledStart,
+    scaledEnd,
+    options.metrics.labelOffset,
+    options.labelPosition ?? "center",
+  );
   const labelBox = getLabelBox(options.label, options.metrics);
+  const angle = lineAngle(scaledStart, scaledEnd);
+  const tickLength = options.metrics.pointRadius * 2.2;
+  const tickDx = Math.sin(angle) * (tickLength / 2);
+  const tickDy = -Math.cos(angle) * (tickLength / 2);
+  const labelRotation = options.labelOrientation === "aligned" ? angle : 0;
 
   context.save();
   context.strokeStyle = options.color;
@@ -2006,28 +2198,32 @@ function drawMeasurement(
   context.stroke();
   context.setLineDash([]);
 
-  for (const point of [scaledStart, scaledEnd]) {
+  if ((options.endCap ?? "circle") === "circle") {
+    for (const point of [scaledStart, scaledEnd]) {
+      context.beginPath();
+      context.arc(point.x, point.y, options.metrics.pointRadius, 0, Math.PI * 2);
+      context.fill();
+    }
+  } else {
     context.beginPath();
-    context.arc(point.x, point.y, options.metrics.pointRadius, 0, Math.PI * 2);
-    context.fill();
+    context.moveTo(scaledStart.x - tickDx, scaledStart.y - tickDy);
+    context.lineTo(scaledStart.x + tickDx, scaledStart.y + tickDy);
+    context.moveTo(scaledEnd.x - tickDx, scaledEnd.y - tickDy);
+    context.lineTo(scaledEnd.x + tickDx, scaledEnd.y + tickDy);
+    context.stroke();
   }
 
+  context.translate(labelPosition.x, labelPosition.y);
+  context.rotate(labelRotation);
   context.fillStyle = "rgba(6, 10, 17, 0.84)";
-  roundRect(
-    context,
-    labelPosition.x - labelBox.width / 2,
-    labelPosition.y - labelBox.height / 2,
-    labelBox.width,
-    labelBox.height,
-    labelBox.radius,
-  );
+  roundRect(context, -labelBox.width / 2, -labelBox.height / 2, labelBox.width, labelBox.height, labelBox.radius);
   context.fill();
 
   context.fillStyle = "#f9f6ef";
   context.font = `600 ${Math.round(options.metrics.labelFontSize)}px sans-serif`;
   context.textAlign = "center";
   context.textBaseline = "middle";
-  context.fillText(options.label, labelPosition.x, labelPosition.y + options.metrics.labelFontSize * 0.04);
+  context.fillText(options.label, 0, options.metrics.labelFontSize * 0.04);
   context.restore();
 }
 
