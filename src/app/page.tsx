@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useEffect, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useEffectEvent, useRef, useState } from "react";
 import Image from "next/image";
 import styles from "./page.module.css";
 
@@ -396,13 +396,6 @@ async function canvasToBlob(canvas: HTMLCanvasElement, format: "png" | "jpeg") {
   });
 }
 
-function midpoint(start: Point, end: Point) {
-  return {
-    x: (start.x + end.x) / 2,
-    y: (start.y + end.y) / 2,
-  };
-}
-
 function polygonArea(points: Point[]) {
   if (points.length < 3) {
     return 0;
@@ -523,7 +516,7 @@ export default function Home() {
   const [labelSize, setLabelSize] = useState(1);
   const [lineSize, setLineSize] = useState(1);
   const [scaleSize, setScaleSize] = useState(1);
-  const [isOffline, setIsOffline] = useState(false);
+  const [isOffline, setIsOffline] = useState(() => (typeof navigator === "undefined" ? false : !navigator.onLine));
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
 
@@ -551,8 +544,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    setIsOffline(!navigator.onLine);
-
     const handleOnline = () => setIsOffline(false);
     const handleOffline = () => setIsOffline(true);
 
@@ -633,33 +624,33 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const handleGlobalWheel = (event: WheelEvent) => {
-      if (!imageAsset || !event.ctrlKey) {
-        return;
-      }
-
-      event.preventDefault();
-
-      const rect = viewportRef.current?.getBoundingClientRect();
-
-      if (!rect || !isPointInsideStage(event.clientX, event.clientY)) {
-        return;
-      }
-
-      const sensitivity = 0.0024;
-
-      applyZoom(zoom * Math.exp(-event.deltaY * sensitivity), {
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top,
-      });
-    };
-
     window.addEventListener("wheel", handleGlobalWheel, { passive: false, capture: true });
 
     return () => {
       window.removeEventListener("wheel", handleGlobalWheel, { capture: true });
     };
   }, [imageAsset, pan.x, pan.y, viewport.height, viewport.width, zoom]);
+
+  const handleGlobalWheel = useEffectEvent((event: WheelEvent) => {
+    if (!imageAsset || !event.ctrlKey) {
+      return;
+    }
+
+    event.preventDefault();
+
+    const rect = viewportRef.current?.getBoundingClientRect();
+
+    if (!rect || !isPointInsideStage(event.clientX, event.clientY)) {
+      return;
+    }
+
+    const sensitivity = 0.0024;
+
+    applyZoom(zoom * Math.exp(-event.deltaY * sensitivity), {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    });
+  });
 
   useEffect(() => {
     const element = viewportRef.current;
@@ -681,50 +672,6 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const handleGestureStart = (event: Event) => {
-      const gestureEvent = event as TrackpadGestureEvent;
-
-      if (!imageAsset) {
-        return;
-      }
-
-      event.preventDefault();
-      gestureZoomRef.current = {
-        active: isPointInsideStage(gestureEvent.clientX, gestureEvent.clientY),
-        baseZoom: zoom,
-      };
-    };
-
-    const handleGestureChange = (event: Event) => {
-      const gestureEvent = event as TrackpadGestureEvent;
-      const activeGesture = gestureZoomRef.current;
-
-      if (!imageAsset || !activeGesture?.active) {
-        return;
-      }
-
-      const rect = viewportRef.current?.getBoundingClientRect();
-
-      if (!rect) {
-        return;
-      }
-
-      event.preventDefault();
-
-      applyZoom(activeGesture.baseZoom * gestureEvent.scale, {
-        x: gestureEvent.clientX - rect.left,
-        y: gestureEvent.clientY - rect.top,
-      });
-    };
-
-    const handleGestureEnd = (event: Event) => {
-      if (gestureZoomRef.current) {
-        event.preventDefault();
-      }
-
-      gestureZoomRef.current = null;
-    };
-
     window.addEventListener("gesturestart", handleGestureStart, { passive: false, capture: true });
     window.addEventListener("gesturechange", handleGestureChange, { passive: false, capture: true });
     window.addEventListener("gestureend", handleGestureEnd, { passive: false, capture: true });
@@ -735,6 +682,50 @@ export default function Home() {
       window.removeEventListener("gestureend", handleGestureEnd, { capture: true });
     };
   }, [imageAsset, pan.x, pan.y, viewport.height, viewport.width, zoom]);
+
+  const handleGestureStart = useEffectEvent((event: Event) => {
+    const gestureEvent = event as TrackpadGestureEvent;
+
+    if (!imageAsset) {
+      return;
+    }
+
+    event.preventDefault();
+    gestureZoomRef.current = {
+      active: isPointInsideStage(gestureEvent.clientX, gestureEvent.clientY),
+      baseZoom: zoom,
+    };
+  });
+
+  const handleGestureChange = useEffectEvent((event: Event) => {
+    const gestureEvent = event as TrackpadGestureEvent;
+    const activeGesture = gestureZoomRef.current;
+
+    if (!imageAsset || !activeGesture?.active) {
+      return;
+    }
+
+    const rect = viewportRef.current?.getBoundingClientRect();
+
+    if (!rect) {
+      return;
+    }
+
+    event.preventDefault();
+
+    applyZoom(activeGesture.baseZoom * gestureEvent.scale, {
+      x: gestureEvent.clientX - rect.left,
+      y: gestureEvent.clientY - rect.top,
+    });
+  });
+
+  const handleGestureEnd = useEffectEvent((event: Event) => {
+    if (gestureZoomRef.current) {
+      event.preventDefault();
+    }
+
+    gestureZoomRef.current = null;
+  });
 
   useEffect(() => {
     if (!storageReady) {
