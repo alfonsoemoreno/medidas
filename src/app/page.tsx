@@ -24,6 +24,12 @@ type BeforeInstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 };
 
+type TrackpadGestureEvent = Event & {
+  scale: number;
+  clientX: number;
+  clientY: number;
+};
+
 type Point = {
   x: number;
   y: number;
@@ -299,6 +305,7 @@ export default function Home() {
   const objectUrlRef = useRef<string | null>(null);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
+  const gestureZoomRef = useRef<{ active: boolean; baseZoom: number } | null>(null);
 
   const [viewport, setViewport] = useState<Viewport>({ width: 0, height: 0 });
   const [imageAsset, setImageAsset] = useState<ImageAsset | null>(null);
@@ -427,6 +434,110 @@ export default function Home() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    const handleGlobalWheel = (event: WheelEvent) => {
+      if (!imageAsset || !event.ctrlKey) {
+        return;
+      }
+
+      event.preventDefault();
+
+      const rect = viewportRef.current?.getBoundingClientRect();
+
+      if (!rect || !isPointInsideStage(event.clientX, event.clientY)) {
+        return;
+      }
+
+      const sensitivity = 0.0024;
+
+      applyZoom(zoom * Math.exp(-event.deltaY * sensitivity), {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top,
+      });
+    };
+
+    window.addEventListener("wheel", handleGlobalWheel, { passive: false, capture: true });
+
+    return () => {
+      window.removeEventListener("wheel", handleGlobalWheel, { capture: true });
+    };
+  }, [imageAsset, pan.x, pan.y, viewport.height, viewport.width, zoom]);
+
+  useEffect(() => {
+    const element = viewportRef.current;
+
+    if (!element) {
+      return;
+    }
+
+    const blockViewerScroll = (event: WheelEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    element.addEventListener("wheel", blockViewerScroll, { passive: false });
+
+    return () => {
+      element.removeEventListener("wheel", blockViewerScroll);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleGestureStart = (event: Event) => {
+      const gestureEvent = event as TrackpadGestureEvent;
+
+      if (!imageAsset) {
+        return;
+      }
+
+      event.preventDefault();
+      gestureZoomRef.current = {
+        active: isPointInsideStage(gestureEvent.clientX, gestureEvent.clientY),
+        baseZoom: zoom,
+      };
+    };
+
+    const handleGestureChange = (event: Event) => {
+      const gestureEvent = event as TrackpadGestureEvent;
+      const activeGesture = gestureZoomRef.current;
+
+      if (!imageAsset || !activeGesture?.active) {
+        return;
+      }
+
+      const rect = viewportRef.current?.getBoundingClientRect();
+
+      if (!rect) {
+        return;
+      }
+
+      event.preventDefault();
+
+      applyZoom(activeGesture.baseZoom * gestureEvent.scale, {
+        x: gestureEvent.clientX - rect.left,
+        y: gestureEvent.clientY - rect.top,
+      });
+    };
+
+    const handleGestureEnd = (event: Event) => {
+      if (gestureZoomRef.current) {
+        event.preventDefault();
+      }
+
+      gestureZoomRef.current = null;
+    };
+
+    window.addEventListener("gesturestart", handleGestureStart, { passive: false, capture: true });
+    window.addEventListener("gesturechange", handleGestureChange, { passive: false, capture: true });
+    window.addEventListener("gestureend", handleGestureEnd, { passive: false, capture: true });
+
+    return () => {
+      window.removeEventListener("gesturestart", handleGestureStart, { capture: true });
+      window.removeEventListener("gesturechange", handleGestureChange, { capture: true });
+      window.removeEventListener("gestureend", handleGestureEnd, { capture: true });
+    };
+  }, [imageAsset, pan.x, pan.y, viewport.height, viewport.width, zoom]);
 
   useEffect(() => {
     if (!storageReady) {
@@ -628,6 +739,24 @@ export default function Home() {
     }
   }
 
+  function isPointInsideStage(clientX: number, clientY: number) {
+    const rect = viewportRef.current?.getBoundingClientRect();
+
+    if (!rect || renderedWidth <= 0 || renderedHeight <= 0) {
+      return false;
+    }
+
+    const localX = clientX - rect.left;
+    const localY = clientY - rect.top;
+
+    return (
+      localX >= stageX &&
+      localX <= stageX + renderedWidth &&
+      localY >= stageY &&
+      localY <= stageY + renderedHeight
+    );
+  }
+
   function handlePointerDown(event: React.PointerEvent<HTMLDivElement>) {
     if (toolMode !== "navigate" || !imageAsset) {
       return;
@@ -708,7 +837,17 @@ export default function Home() {
   }
 
   function handleWheel(event: React.WheelEvent<HTMLDivElement>) {
-    if (!imageAsset) {
+    if (!imageAsset || event.ctrlKey) {
+      return;
+    }
+
+    const isInsideStage = isPointInsideStage(event.clientX, event.clientY);
+
+    if (!isInsideStage) {
+      if (event.ctrlKey) {
+        event.preventDefault();
+      }
+
       return;
     }
 
@@ -1036,73 +1175,6 @@ export default function Home() {
               ) : null}
             </div>
 
-            <div className={styles.block}>
-              <div className={styles.label}>Salida</div>
-              <div className={styles.buttonStack}>
-                <button
-                  className={styles.secondaryButton}
-                  onClick={() => exportAnnotatedImage("png")}
-                  disabled={!imageAsset}
-                >
-                  Exportar PNG
-                </button>
-                <button
-                  className={styles.secondaryButton}
-                  onClick={() => exportAnnotatedImage("jpeg")}
-                  disabled={!imageAsset}
-                >
-                  Exportar JPG
-                </button>
-                <button className={styles.ghostButton} onClick={() => setShowScaleBar((current) => !current)} disabled={!calibration}>
-                  {showScaleBar ? "Ocultar escala" : "Mostrar escala"}
-                </button>
-                <button className={styles.ghostButton} onClick={resetView} disabled={!imageAsset}>
-                  Reset vista
-                </button>
-              </div>
-            </div>
-
-            <div className={styles.block}>
-              <div className={styles.label}>Tamano</div>
-              <div className={styles.sliderGroup}>
-                <label className={styles.sliderField}>
-                  <span>Etiquetas</span>
-                  <input
-                    type="range"
-                    min="0.2"
-                    max="4"
-                    step="0.1"
-                    value={labelSize}
-                    onChange={(event) => setLabelSize(Number(event.target.value))}
-                  />
-                  <strong>{labelSize.toFixed(1)}x</strong>
-                </label>
-                <label className={styles.sliderField}>
-                  <span>Lineas</span>
-                  <input
-                    type="range"
-                    min="0.2"
-                    max="4"
-                    step="0.1"
-                    value={lineSize}
-                    onChange={(event) => setLineSize(Number(event.target.value))}
-                  />
-                  <strong>{lineSize.toFixed(1)}x</strong>
-                </label>
-                <label className={styles.sliderField}>
-                  <span>Escala</span>
-                  <input
-                    type="range"
-                    min="0.2"
-                    max="4"
-                    step="0.1"
-                    value={scaleSize}
-                    onChange={(event) => setScaleSize(Number(event.target.value))}
-                  />
-                  <strong>{scaleSize.toFixed(1)}x</strong>
-                </label>
-              </div>
-            </div>
           </aside>
 
           <section className={styles.viewerColumn}>
@@ -1257,13 +1329,85 @@ export default function Home() {
             </div>
 
             <div className={styles.viewerHint}>
-              <span>Trackpad o rueda: zoom suave</span>
+              <span>Trackpad o rueda sobre la imagen: zoom suave</span>
               <span>Modo mover: arrastrar</span>
               <span>Modo calibrar o medir: dos clics</span>
             </div>
           </section>
 
           <aside className={styles.sidebar}>
+            <div className={styles.block}>
+              <div className={styles.label}>Tamano</div>
+              <div className={styles.sliderGroup}>
+                <label className={styles.sliderField}>
+                  <span>Etiquetas</span>
+                  <input
+                    type="range"
+                    min="0.2"
+                    max="4"
+                    step="0.1"
+                    value={labelSize}
+                    onChange={(event) => setLabelSize(Number(event.target.value))}
+                  />
+                  <strong>{labelSize.toFixed(1)}x</strong>
+                </label>
+                <label className={styles.sliderField}>
+                  <span>Lineas</span>
+                  <input
+                    type="range"
+                    min="0.2"
+                    max="4"
+                    step="0.1"
+                    value={lineSize}
+                    onChange={(event) => setLineSize(Number(event.target.value))}
+                  />
+                  <strong>{lineSize.toFixed(1)}x</strong>
+                </label>
+                <label className={styles.sliderField}>
+                  <span>Escala</span>
+                  <input
+                    type="range"
+                    min="0.2"
+                    max="4"
+                    step="0.1"
+                    value={scaleSize}
+                    onChange={(event) => setScaleSize(Number(event.target.value))}
+                  />
+                  <strong>{scaleSize.toFixed(1)}x</strong>
+                </label>
+              </div>
+            </div>
+
+            <div className={styles.block}>
+              <div className={styles.label}>Salida</div>
+              <div className={styles.buttonStack}>
+                <button
+                  className={styles.secondaryButton}
+                  onClick={() => exportAnnotatedImage("png")}
+                  disabled={!imageAsset}
+                >
+                  Exportar PNG
+                </button>
+                <button
+                  className={styles.secondaryButton}
+                  onClick={() => exportAnnotatedImage("jpeg")}
+                  disabled={!imageAsset}
+                >
+                  Exportar JPG
+                </button>
+                <button
+                  className={styles.ghostButton}
+                  onClick={() => setShowScaleBar((current) => !current)}
+                  disabled={!calibration}
+                >
+                  {showScaleBar ? "Ocultar escala" : "Mostrar escala"}
+                </button>
+                <button className={styles.ghostButton} onClick={resetView} disabled={!imageAsset}>
+                  Reset vista
+                </button>
+              </div>
+            </div>
+
             <div className={styles.block}>
               <div className={styles.label}>Mediciones</div>
               {measurements.length ? (
@@ -1441,17 +1585,6 @@ function drawScaleBar(
   const labelRadius = Math.max(labelHeight / 2, 10);
   const barY = y;
   const labelY = barY - metrics.scaleBarTickHeight - labelHeight - metrics.scaleBarLabelGap;
-
-  context.fillStyle = "rgba(7, 11, 18, 0.52)";
-  roundRect(
-    context,
-    x - 2,
-    barY + metrics.scaleBarThickness,
-    scalePixels + 4,
-    Math.max(metrics.scaleBarThickness * 1.6, 4),
-    Math.max(metrics.scaleBarThickness, 2),
-  );
-  context.fill();
 
   context.fillStyle = "rgba(7, 11, 18, 0.78)";
   roundRect(context, x - 4, labelY, labelWidth, labelHeight, labelRadius);
