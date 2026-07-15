@@ -29,15 +29,16 @@
 .shell {
   position: relative;
   z-index: 1;
-  width: min(1560px, calc(100vw - 24px));
+  width: min(2200px, calc(100vw - 20px));
   margin: 0 auto;
-  padding: 20px 0 28px;
+  padding: 14px 0 20px;
 }
 
 .workspace {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr) 300px;
-  gap: 20px;
+  grid-template-columns: clamp(248px, 16vw, 320px) minmax(0, 1fr) clamp(228px, 15vw, 300px);
+  grid-template-areas: "left viewer right";
+  gap: 14px;
   align-items: start;
 }
 
@@ -45,71 +46,34 @@
 .viewerColumn {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
+}
+
+.workspace > .sidebar:first-child {
+  grid-area: left;
+}
+
+.workspace > .viewerColumn {
+  grid-area: viewer;
+}
+
+.workspace > .sidebar:last-child {
+  grid-area: right;
 }
 
 .brandPanel {
-  padding: 20px 20px 18px;
+  padding: 12px;
   border: 1px solid rgba(17, 31, 80, 0.08);
-  border-radius: 28px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 255, 0.9)),
-    radial-gradient(circle at top, rgba(145, 164, 216, 0.16), transparent 55%);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.84);
   box-shadow:
-    0 20px 48px rgba(23, 36, 79, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
-}
-
-.sidebarBrand {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 14px;
-  padding: 6px 0 2px;
-}
-
-.sidebarBrand img {
-  width: min(188px, 100%);
-  height: auto;
-  object-fit: contain;
-}
-
-.brandTextBlock {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-bottom: 16px;
-  text-align: center;
-}
-
-.brandTextBlock strong {
-  color: var(--brand-700);
-  font-size: 1.32rem;
-  line-height: 1.1;
-  letter-spacing: -0.03em;
-}
-
-.brandTextBlock span {
-  color: var(--text-muted);
-  font-size: 0.93rem;
-  line-height: 1.5;
+    0 18px 42px rgba(23, 36, 79, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.48);
+  backdrop-filter: blur(18px);
 }
 
 .brandPanel .primaryButton {
   width: 100%;
-}
-
-.brandPanel .secondaryButton {
-  width: 100%;
-  margin-top: 10px;
-}
-
-.installHint {
-  margin-top: 12px;
-  color: var(--text-muted);
-  font-size: 0.84rem;
-  line-height: 1.5;
-  text-align: center;
 }
 
 .block,
@@ -117,7 +81,7 @@
 .viewer,
 .viewerHint {
   border: 1px solid rgba(17, 31, 80, 0.08);
-  border-radius: 28px;
+  border-radius: 24px;
   background: rgba(255, 255, 255, 0.84);
   box-shadow:
     0 18px 42px rgba(23, 36, 79, 0.08),
@@ -126,12 +90,12 @@
 }
 
 .block {
-  padding: 18px;
+  padding: 14px;
 }
 
 .label {
-  margin-bottom: 14px;
-  font-size: 0.78rem;
+  margin-bottom: 10px;
+  font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.16em;
   text-transform: uppercase;
@@ -144,9 +108,9 @@
 .toolButton,
 .toolButtonActive,
 .measurementItem button {
-  min-height: 48px;
+  min-height: 42px;
   border: 0;
-  border-radius: 18px;
+  border-radius: 15px;
   font: inherit;
   font-weight: 700;
   transition:
@@ -159,8 +123,28 @@
 .secondaryButton,
 .ghostButton,
 .measurementItem button {
-  padding: 0 18px;
+  padding: 0 14px;
   cursor: pointer;
+}
+
+.buttonContent {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.actionIcon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+  overflow: visible;
 }
 
 .primaryButton {
@@ -212,18 +196,18 @@
 .toolGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .calibrationModes {
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
 .toolActions {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-top: 14px;
+  gap: 10px;
+  margin-top: 10px;
 }
 
 .selectField {
@@ -234,7 +218,7 @@
 
 .selectField span {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: 0.69rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -242,10 +226,10 @@
 
 .selectField select {
   width: 100%;
-  min-height: 48px;
-  padding: 0 14px;
+  min-height: 42px;
+  padding: 0 12px;
   border: 1px solid rgba(17, 31, 80, 0.08);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--surface-strong);
   color: var(--brand-700);
   font: inherit;
@@ -254,15 +238,15 @@
 
 .toolButton,
 .toolButtonActive {
-  padding: 0 10px;
+  padding: 0 8px;
   cursor: pointer;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
 }
 
 .formRow {
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;
-  gap: 10px;
+  gap: 8px;
 }
 
 .calibrationInputs {
@@ -271,10 +255,10 @@
 
 .formRow input {
   width: 100%;
-  min-height: 48px;
-  padding: 0 14px;
+  min-height: 42px;
+  padding: 0 12px;
   border: 1px solid rgba(17, 31, 80, 0.08);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--surface-strong);
   color: var(--brand-700);
   font: inherit;
@@ -283,10 +267,10 @@
 
 .selectField input {
   width: 100%;
-  min-height: 48px;
-  padding: 0 14px;
+  min-height: 42px;
+  padding: 0 12px;
   border: 1px solid rgba(17, 31, 80, 0.08);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--surface-strong);
   color: var(--brand-700);
   font: inherit;
@@ -296,25 +280,25 @@
 .manualEquation {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr) 92px;
-  gap: 10px;
+  gap: 8px;
   align-items: end;
-  margin-top: 4px;
+  margin-top: 2px;
 }
 
 .equationSign {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 48px;
+  min-height: 42px;
   color: var(--brand-700);
-  font-size: 1.2rem;
+  font-size: 1.05rem;
   font-weight: 800;
 }
 
 .helperText {
-  margin-top: 10px;
+  margin-top: 8px;
   color: var(--text-muted);
-  font-size: 0.84rem;
+  font-size: 0.78rem;
   line-height: 1.45;
 }
 
@@ -334,7 +318,7 @@
 .presetSaveRow {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .presetNameField {
@@ -346,7 +330,7 @@
 
 .presetNameField span {
   color: var(--text-muted);
-  font-size: 0.75rem;
+  font-size: 0.69rem;
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -354,10 +338,10 @@
 
 .presetSaveRow input {
   width: 100%;
-  min-height: 48px;
-  padding: 0 14px;
+  min-height: 42px;
+  padding: 0 12px;
   border: 1px solid rgba(17, 31, 80, 0.08);
-  border-radius: 16px;
+  border-radius: 14px;
   background: var(--surface-strong);
   color: var(--brand-700);
   font: inherit;
@@ -372,12 +356,12 @@
   display: flex;
   justify-content: space-between;
   gap: 10px;
-  margin-top: 10px;
-  padding: 13px 14px;
-  border-radius: 18px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: 15px;
   background: rgba(247, 249, 255, 0.94);
   border: 1px solid rgba(17, 31, 80, 0.06);
-  font-size: 0.94rem;
+  font-size: 0.88rem;
 }
 
 .metaRow strong {
@@ -387,22 +371,22 @@
 .buttonStack {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .sliderGroup {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .sliderField {
   display: grid;
-  grid-template-columns: 76px minmax(0, 1fr) 42px;
-  gap: 10px;
+  grid-template-columns: 68px minmax(0, 1fr) 38px;
+  gap: 8px;
   align-items: center;
-  font-size: 0.92rem;
+  font-size: 0.86rem;
 }
 
 .sliderField span,
@@ -424,41 +408,68 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  padding: 16px 20px;
+  gap: 10px;
+  padding: 12px 14px;
 }
 
 .statusCluster {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+  align-items: center;
 }
 
-.statusCluster span {
-  padding: 10px 13px;
+.statusCluster > span {
+  padding: 8px 10px;
   border-radius: 999px;
   background: rgba(17, 31, 80, 0.05);
   color: var(--brand-700);
-  font-size: 0.86rem;
+  font-size: 0.8rem;
   font-weight: 600;
 }
 
-.statusCluster .statusOnline {
+.statusCluster > .statusOnline {
   background: rgba(31, 125, 92, 0.12);
   color: #176c51;
 }
 
-.statusCluster .statusOffline {
+.statusCluster > .statusOffline {
   background: rgba(161, 48, 48, 0.12);
   color: #8d2230;
+}
+
+.installBadge {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid rgba(17, 31, 80, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--brand-700);
+  font: inherit;
+  font-size: 0.77rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transition:
+    transform 0.16s ease,
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    opacity 0.16s ease;
+}
+
+.installBadge:hover {
+  transform: translateY(-1px);
+  background: rgba(17, 31, 80, 0.06);
+  border-color: rgba(17, 31, 80, 0.14);
 }
 
 .zoomButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   padding: 0;
   border: 0;
   border-radius: 999px;
@@ -472,8 +483,8 @@
 }
 
 .zoomIcon {
-  width: 19px;
-  height: 19px;
+  width: 16px;
+  height: 16px;
   stroke: currentColor;
   stroke-width: 2.4;
   stroke-linecap: round;
@@ -494,7 +505,7 @@
 .viewer {
   position: relative;
   aspect-ratio: 16 / 10;
-  min-height: 620px;
+  min-height: 660px;
   overflow: hidden;
   overscroll-behavior: contain;
   background:
@@ -608,14 +619,6 @@
   text-align: center;
 }
 
-.viewerEmptyLogo {
-  width: 132px;
-  height: 132px;
-  object-fit: contain;
-  opacity: 0.95;
-  filter: drop-shadow(0 18px 32px rgba(17, 31, 80, 0.16));
-}
-
 .viewerEmpty strong {
   font-size: 1.4rem;
   font-weight: 700;
@@ -632,16 +635,16 @@
 .viewerHint {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  padding: 14px 16px;
+  gap: 8px;
+  padding: 10px 12px;
 }
 
 .viewerHint span {
-  padding: 9px 12px;
+  padding: 7px 10px;
   border-radius: 999px;
   background: rgba(17, 31, 80, 0.05);
   color: var(--brand-700);
-  font-size: 0.82rem;
+  font-size: 0.76rem;
   font-weight: 600;
 }
 
@@ -654,17 +657,17 @@
 .presetList {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 .presetItem {
   display: flex;
   flex-direction: column;
   align-items: start;
-  gap: 14px;
-  padding: 15px;
-  border-radius: 20px;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
   background: rgba(248, 250, 255, 0.96);
   border: 1px solid rgba(17, 31, 80, 0.06);
 }
@@ -682,21 +685,21 @@
 
 .presetItem strong {
   color: var(--brand-700);
-  font-size: 0.92rem;
+  font-size: 0.87rem;
   line-height: 1.3;
 }
 
 .presetItem span {
-  margin-top: 3px;
+  margin-top: 2px;
   color: #64748b;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   line-height: 1.35;
 }
 
 .presetItem em {
-  margin-top: 4px;
+  margin-top: 3px;
   color: #7b8a97;
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-style: normal;
   line-height: 1.35;
 }
@@ -705,7 +708,7 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   width: 100%;
-  gap: 8px;
+  gap: 6px;
 }
 
 .presetActions button,
@@ -718,10 +721,10 @@
 }
 
 .presetDeleteButton {
-  min-height: 48px;
-  padding: 0 16px;
+  min-height: 42px;
+  padding: 0 12px;
   border: 0;
-  border-radius: 18px;
+  border-radius: 15px;
   background: rgba(161, 48, 48, 0.09);
   color: #8d2230;
   font: inherit;
@@ -741,9 +744,9 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 14px;
-  padding: 15px;
-  border-radius: 20px;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
   background: rgba(248, 250, 255, 0.96);
   border: 1px solid rgba(17, 31, 80, 0.06);
 }
@@ -760,13 +763,13 @@
 .measurementNameInput {
   display: block;
   width: 100%;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   padding: 0;
   border: 0;
   background: transparent;
   color: var(--brand-700);
   font: inherit;
-  font-size: 1.08rem;
+  font-size: 0.98rem;
   font-weight: 700;
   line-height: 1.25;
   outline: none;
@@ -779,17 +782,17 @@
 .measurementItem span {
   display: block;
   color: #64748b;
-  font-size: 0.98rem;
+  font-size: 0.88rem;
   line-height: 1.35;
 }
 
 .measurementSelect {
   width: 100%;
-  min-height: 42px;
-  margin-top: 10px;
+  min-height: 38px;
+  margin-top: 8px;
   padding: 0 12px;
   border: 1px solid rgba(17, 31, 80, 0.08);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--surface-strong);
   color: var(--brand-700);
   font: inherit;
@@ -803,17 +806,43 @@
 }
 
 .emptyState {
-  padding: 18px;
-  border-radius: 20px;
+  padding: 14px;
+  border-radius: 16px;
   background: rgba(248, 250, 255, 0.86);
   color: #64748b;
-  font-size: 0.95rem;
+  font-size: 0.88rem;
   line-height: 1.5;
 }
 
-@media (max-width: 1260px) {
+@media (max-width: 1440px) {
   .workspace {
-    grid-template-columns: 1fr;
+    grid-template-columns: 264px minmax(0, 1fr) 244px;
+  }
+}
+
+@media (min-width: 1800px) {
+  .workspace {
+    gap: 18px;
+  }
+
+  .viewer {
+    min-height: 720px;
+  }
+}
+
+@media (max-width: 1320px) {
+  .workspace {
+    grid-template-columns: 248px minmax(0, 1fr) 228px;
+    gap: 12px;
+  }
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    grid-template-columns: 248px minmax(0, 1fr);
+    grid-template-areas:
+      "left viewer"
+      "right viewer";
   }
 
   .viewer {
@@ -821,14 +850,20 @@
   }
 }
 
+@media (max-width: 980px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "left"
+      "viewer"
+      "right";
+  }
+}
+
 @media (max-width: 860px) {
   .shell {
     width: min(100vw - 14px, 100%);
     padding-top: 12px;
-  }
-
-  .sidebarBrand img {
-    width: min(160px, 100%);
   }
 
   .viewerTopbar {

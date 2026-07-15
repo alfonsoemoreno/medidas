@@ -185,6 +185,107 @@ function ZoomIcon({ type }: { type: "in" | "out" }) {
   );
 }
 
+function ActionIcon({
+  type,
+}: {
+  type:
+    | "upload"
+    | "install"
+    | "apply"
+    | "save"
+    | "restore"
+    | "clear"
+    | "undo"
+    | "close"
+    | "png"
+    | "jpg"
+    | "hide"
+    | "show"
+    | "reset";
+}) {
+  return (
+    <svg className={styles.actionIcon} viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      {type === "upload" ? (
+        <>
+          <path d="M10 13V4" />
+          <path d="M6.5 7.5 10 4l3.5 3.5" />
+          <path d="M4 15.5h12" />
+        </>
+      ) : null}
+      {type === "install" ? (
+        <>
+          <path d="M10 3.5v8" />
+          <path d="M6.5 8 10 11.5 13.5 8" />
+          <path d="M4 14.5h12" />
+        </>
+      ) : null}
+      {type === "apply" ? (
+        <>
+          <path d="M4 10.5 8 14.5 16 6.5" />
+        </>
+      ) : null}
+      {type === "save" ? (
+        <>
+          <path d="M5 4.5h8l2 2v9H5z" />
+          <path d="M8 4.5v4h4v-4" />
+          <path d="M8 15.5h4" />
+        </>
+      ) : null}
+      {type === "restore" ? (
+        <>
+          <path d="M5 6.5v4h4" />
+          <path d="M6 10.5a5 5 0 1 0 1.4-4" />
+        </>
+      ) : null}
+      {type === "clear" ? (
+        <>
+          <path d="M5 5l10 10" />
+          <path d="M15 5 5 15" />
+        </>
+      ) : null}
+      {type === "undo" ? (
+        <>
+          <path d="M7 6 4 9l3 3" />
+          <path d="M5 9h5a4 4 0 1 1 0 8h-1.5" />
+        </>
+      ) : null}
+      {type === "close" ? (
+        <>
+          <path d="M4.5 10h11" />
+          <path d="M10 4.5v11" />
+          <path d="M5.5 5.5 14.5 14.5" opacity="0.25" />
+        </>
+      ) : null}
+      {type === "png" || type === "jpg" ? (
+        <>
+          <rect x="4.5" y="3.5" width="11" height="13" rx="2" />
+          <path d="M7.5 8.5h5" />
+          <path d="M7.5 11h5" />
+          <path d="M7.5 13.5h3.5" />
+        </>
+      ) : null}
+      {type === "hide" ? (
+        <>
+          <path d="M3.5 10s2.2-4 6.5-4 6.5 4 6.5 4-2.2 4-6.5 4-6.5-4-6.5-4Z" />
+          <path d="M7 13 13 7" />
+        </>
+      ) : null}
+      {type === "show" ? (
+        <>
+          <path d="M3.5 10s2.2-4 6.5-4 6.5 4 6.5 4-2.2 4-6.5 4-6.5-4-6.5-4Z" />
+          <circle cx="10" cy="10" r="1.8" />
+        </>
+      ) : null}
+      {type === "reset" ? (
+        <>
+          <path d="M5 6.5v4h4" />
+          <path d="M6 10.5a5 5 0 1 0 1.4-4" />
+        </>
+      ) : null}
+    </svg>
+  );
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
@@ -1391,26 +1492,12 @@ export default function Home() {
         <section className={styles.workspace}>
           <aside className={styles.sidebar}>
             <div className={styles.brandPanel}>
-              <div className={styles.sidebarBrand}>
-                <Image src="/icon.png" alt="Escala y Medición" width={188} height={188} priority />
-              </div>
-              <div className={styles.brandTextBlock}>
-                <strong>Escala y Medición</strong>
-                <span>Calibración profesional, medición visual y cálculo de áreas para imágenes de microscopio.</span>
-              </div>
               <button className={styles.primaryButton} onClick={openFilePicker}>
-                {imageAsset ? "Cambiar imagen" : "Subir imagen"}
+                <span className={styles.buttonContent}>
+                  <ActionIcon type="upload" />
+                  <span>{imageAsset ? "Cambiar imagen" : "Subir imagen"}</span>
+                </span>
               </button>
-              {installPrompt && !isInstalled ? (
-                <button className={styles.secondaryButton} onClick={installApp}>
-                  Instalar app
-                </button>
-              ) : null}
-              <p className={styles.installHint}>
-                {isInstalled
-                  ? "Instalada. Tras la primera carga, puede funcionar sin conexión."
-                  : "Ábrela una vez con internet y luego podrás usarla sin conexión."}
-              </p>
             </div>
 
             <div className={styles.block}>
@@ -1451,14 +1538,20 @@ export default function Home() {
                   </div>
                   <div className={styles.buttonStack}>
                     <button className={styles.ghostButton} onClick={undoAreaPoint} disabled={areaDraft.length === 0}>
-                      Deshacer punto area
+                      <span className={styles.buttonContent}>
+                        <ActionIcon type="undo" />
+                        <span>Deshacer punto area</span>
+                      </span>
                     </button>
                     <button
                       className={styles.secondaryButton}
                       onClick={finishAreaDraft}
                       disabled={areaDraft.length < 3 || !calibration}
                     >
-                      Cerrar area
+                      <span className={styles.buttonContent}>
+                        <ActionIcon type="close" />
+                        <span>Cerrar area</span>
+                      </span>
                     </button>
                   </div>
                 </div>
@@ -1555,7 +1648,10 @@ export default function Home() {
                       : calibrationDraft.length !== 2
                   }
                 >
-                  Aplicar escala
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="apply" />
+                    <span>Aplicar escala</span>
+                  </span>
                 </button>
                 <div className={styles.presetSaveRow}>
                   <label className={styles.presetNameField}>
@@ -1568,7 +1664,10 @@ export default function Home() {
                     />
                   </label>
                   <button className={styles.ghostButton} onClick={saveCurrentCalibration} disabled={!calibration}>
-                    Guardar
+                    <span className={styles.buttonContent}>
+                      <ActionIcon type="save" />
+                      <span>Guardar</span>
+                    </span>
                   </button>
                 </div>
                 <button
@@ -1576,10 +1675,16 @@ export default function Home() {
                   onClick={() => lastCalibration && applySavedCalibration(lastCalibration)}
                   disabled={!lastCalibration}
                 >
-                  Recuperar ultima
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="restore" />
+                    <span>Recuperar ultima</span>
+                  </span>
                 </button>
                 <button className={styles.ghostButton} onClick={clearDrafts}>
-                  Limpiar puntos
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="clear" />
+                    <span>Limpiar puntos</span>
+                  </span>
                 </button>
               </div>
               {savedCalibrations.length ? (
@@ -1637,6 +1742,14 @@ export default function Home() {
                 </button>
                 <span>{Math.round(zoom * 100)}%</span>
                 {calibration ? <span>1 {calibration.unit} = {formatPixels(calibration.pixelsPerUnit)}</span> : null}
+                {installPrompt && !isInstalled ? (
+                  <button className={styles.installBadge} onClick={installApp} type="button">
+                    <span className={styles.buttonContent}>
+                      <ActionIcon type="install" />
+                      <span>Instalar app</span>
+                    </span>
+                  </button>
+                ) : null}
               </div>
             </div>
 
@@ -1776,15 +1889,6 @@ export default function Home() {
                 </div>
               ) : (
                 <div className={styles.viewerEmpty}>
-                  <Image
-                    className={styles.viewerEmptyLogo}
-                    src="/icon.png"
-                    alt=""
-                    width={132}
-                    height={132}
-                    aria-hidden="true"
-                    priority
-                  />
                   <strong>Sube una imagen para empezar</strong>
                   <span>Calibra escalas, registra mediciones, calcula areas y exporta resultados con una vista limpia.</span>
                 </div>
@@ -1849,24 +1953,36 @@ export default function Home() {
                   onClick={() => exportAnnotatedImage("png")}
                   disabled={!imageAsset}
                 >
-                  Exportar PNG
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="png" />
+                    <span>Exportar PNG</span>
+                  </span>
                 </button>
                 <button
                   className={styles.secondaryButton}
                   onClick={() => exportAnnotatedImage("jpeg")}
                   disabled={!imageAsset}
                 >
-                  Exportar JPG
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="jpg" />
+                    <span>Exportar JPG</span>
+                  </span>
                 </button>
                 <button
                   className={styles.ghostButton}
                   onClick={() => setShowScaleBar((current) => !current)}
                   disabled={!calibration}
                 >
-                  {showScaleBar ? "Ocultar escala" : "Mostrar escala"}
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type={showScaleBar ? "hide" : "show"} />
+                    <span>{showScaleBar ? "Ocultar escala" : "Mostrar escala"}</span>
+                  </span>
                 </button>
                 <button className={styles.ghostButton} onClick={resetView} disabled={!imageAsset}>
-                  Reset vista
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="reset" />
+                    <span>Reset vista</span>
+                  </span>
                 </button>
               </div>
             </div>
