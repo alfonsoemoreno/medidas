@@ -75,6 +75,7 @@ type Measurement = {
   endCap: MeasurementEndCap;
   manualLabelPosition: Point | null;
   showLabel: boolean;
+  collapsed: boolean;
 };
 
 type MeasurementLabelOrientation = "horizontal" | "aligned";
@@ -89,6 +90,7 @@ type AreaMeasurement = {
   color: string;
   manualLabelPosition: Point | null;
   showLabel: boolean;
+  collapsed: boolean;
 };
 
 type AreaDisplayUnit = "auto" | "um2" | "mm2" | "cm2" | "m2";
@@ -98,6 +100,7 @@ type PanelId = CollapsibleSection;
 type PanelColumn = "left" | "right";
 type PanelLayout = Record<PanelColumn, PanelId[]>;
 type DropPosition = "before" | "after";
+type HoveredAnnotation = { kind: "measurement" | "area"; id: string } | null;
 
 type Viewport = {
   width: number;
@@ -736,6 +739,7 @@ export default function Home() {
   const [panelLayout, setPanelLayout] = useState<PanelLayout>(DEFAULT_PANEL_LAYOUT);
   const [draggedPanel, setDraggedPanel] = useState<PanelId | null>(null);
   const [dropTarget, setDropTarget] = useState<{ panelId: PanelId; position: DropPosition } | null>(null);
+  const [hoveredAnnotation, setHoveredAnnotation] = useState<HoveredAnnotation>(null);
   const [collapsedSections, setCollapsedSections] = useState<Record<CollapsibleSection, boolean>>({
     tool: false,
     calibration: false,
@@ -1431,7 +1435,7 @@ export default function Home() {
     });
   }
 
-  function handlePanelDragStart(event: React.DragEvent<HTMLDivElement>, panelId: PanelId) {
+  function handlePanelDragStart(event: React.DragEvent<HTMLElement>, panelId: PanelId) {
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", panelId);
     setDraggedPanel(panelId);
@@ -1569,6 +1573,19 @@ export default function Home() {
     );
   }
 
+  function toggleMeasurementCollapsed(id: string) {
+    setMeasurements((current) =>
+      current.map((measurement) =>
+        measurement.id === id
+          ? {
+              ...measurement,
+              collapsed: !measurement.collapsed,
+            }
+          : measurement,
+      ),
+    );
+  }
+
   function finishMeasurementDraft() {
     if (!calibration || measurementDraft.length < 2) {
       return;
@@ -1589,6 +1606,7 @@ export default function Home() {
         endCap: "circle",
         manualLabelPosition: null,
         showLabel: true,
+        collapsed: false,
       },
     ]);
 
@@ -1667,6 +1685,7 @@ export default function Home() {
         color: MEASUREMENT_COLORS[current.length % MEASUREMENT_COLORS.length],
         manualLabelPosition: null,
         showLabel: true,
+        collapsed: false,
       },
     ]);
 
@@ -1714,6 +1733,19 @@ export default function Home() {
           ? {
               ...area,
               showLabel: !area.showLabel,
+            }
+          : area,
+      ),
+    );
+  }
+
+  function toggleAreaCollapsed(id: string) {
+    setAreas((current) =>
+      current.map((area) =>
+        area.id === id
+          ? {
+              ...area,
+              collapsed: !area.collapsed,
             }
           : area,
       ),
@@ -1899,7 +1931,7 @@ export default function Home() {
       case "tool":
         return (
           <div className={styles.block}>
-            <button className={styles.blockHeader} onClick={() => toggleSection("tool")} type="button" aria-expanded={!collapsedSections.tool}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("tool")} type="button" aria-expanded={!collapsedSections.tool} data-panel-drag-handle="true" draggable onDragStart={(event) => handlePanelDragStart(event, "tool")} onDragEnd={handlePanelDragEnd}>
               <span className={styles.blockHeaderTitle}>
                 <DragHandleIcon />
                 <span className={styles.label}>Herramienta</span>
@@ -1991,7 +2023,7 @@ export default function Home() {
       case "calibration":
         return (
           <div className={styles.block}>
-            <button className={styles.blockHeader} onClick={() => toggleSection("calibration")} type="button" aria-expanded={!collapsedSections.calibration}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("calibration")} type="button" aria-expanded={!collapsedSections.calibration} data-panel-drag-handle="true" draggable onDragStart={(event) => handlePanelDragStart(event, "calibration")} onDragEnd={handlePanelDragEnd}>
               <span className={styles.blockHeaderTitle}>
                 <DragHandleIcon />
                 <span className={styles.label}>Calibracion</span>
@@ -2133,7 +2165,7 @@ export default function Home() {
       case "size":
         return (
           <div className={styles.block}>
-            <button className={styles.blockHeader} onClick={() => toggleSection("size")} type="button" aria-expanded={!collapsedSections.size}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("size")} type="button" aria-expanded={!collapsedSections.size} data-panel-drag-handle="true" draggable onDragStart={(event) => handlePanelDragStart(event, "size")} onDragEnd={handlePanelDragEnd}>
               <span className={styles.blockHeaderTitle}>
                 <DragHandleIcon />
                 <span className={styles.label}>Tamano</span>
@@ -2164,7 +2196,7 @@ export default function Home() {
       case "output":
         return (
           <div className={styles.block}>
-            <button className={styles.blockHeader} onClick={() => toggleSection("output")} type="button" aria-expanded={!collapsedSections.output}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("output")} type="button" aria-expanded={!collapsedSections.output} data-panel-drag-handle="true" draggable onDragStart={(event) => handlePanelDragStart(event, "output")} onDragEnd={handlePanelDragEnd}>
               <span className={styles.blockHeaderTitle}>
                 <DragHandleIcon />
                 <span className={styles.label}>Salida</span>
@@ -2204,7 +2236,7 @@ export default function Home() {
       case "measurements":
         return (
           <div className={styles.block}>
-            <button className={styles.blockHeader} onClick={() => toggleSection("measurements")} type="button" aria-expanded={!collapsedSections.measurements}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("measurements")} type="button" aria-expanded={!collapsedSections.measurements} data-panel-drag-handle="true" draggable onDragStart={(event) => handlePanelDragStart(event, "measurements")} onDragEnd={handlePanelDragEnd}>
               <span className={styles.blockHeaderTitle}>
                 <DragHandleIcon />
                 <span className={styles.label}>Mediciones</span>
@@ -2215,79 +2247,98 @@ export default function Home() {
               measurements.length ? (
                 <div className={styles.measurementList}>
                   {measurements.map((measurement) => (
-                    <div key={measurement.id} className={styles.measurementItem}>
+                    <div
+                      key={measurement.id}
+                      className={styles.measurementItem}
+                      data-collapsed={measurement.collapsed ? "true" : "false"}
+                      onMouseEnter={() => setHoveredAnnotation({ kind: "measurement", id: measurement.id })}
+                      onMouseLeave={() => setHoveredAnnotation((current) => (current?.kind === "measurement" && current.id === measurement.id ? null : current))}
+                    >
                       <div className={styles.measurementHeaderRow}>
                         <div className={styles.measurementIdentity}>
                           <span className={styles.measurementDot} style={{ backgroundColor: measurement.color }} aria-hidden="true" />
                           <input className={styles.measurementNameInput} value={measurement.name} onChange={(event) => updateMeasurementName(measurement.id, event.target.value)} aria-label="Nombre de medicion" />
                         </div>
+                        <button
+                          className={styles.measurementCollapseButton}
+                          onClick={() => toggleMeasurementCollapsed(measurement.id)}
+                          aria-label={measurement.collapsed ? "Expandir medicion" : "Minimizar medicion"}
+                          title={measurement.collapsed ? "Expandir medicion" : "Minimizar medicion"}
+                          type="button"
+                        >
+                          <CollapseIcon collapsed={measurement.collapsed} />
+                        </button>
                       </div>
                       <div className={styles.measurementContent}>
                         <span className={styles.measurementValue}>
                           {formatNumber(measurement.value)} {measurement.unit}
                         </span>
-                        <div className={styles.measurementActionRow}>
-                          <button
-                            className={styles.measurementIconButton}
-                            onClick={() => toggleMeasurementLabelVisibility(measurement.id)}
-                            aria-label={measurement.showLabel ? "Ocultar etiqueta" : "Mostrar etiqueta"}
-                            title={measurement.showLabel ? "Ocultar etiqueta" : "Mostrar etiqueta"}
-                            type="button"
-                          >
-                            <ActionIcon type={measurement.showLabel ? "hide" : "show"} />
-                          </button>
-                          <button
-                            className={styles.measurementIconButton}
-                            onClick={() => resetMeasurementLabelPosition(measurement.id)}
-                            aria-label="Resetear posicion de etiqueta"
-                            title="Resetear posicion de etiqueta"
-                            type="button"
-                            disabled={!measurement.manualLabelPosition}
-                          >
-                            <ActionIcon type="reset" />
-                          </button>
-                          <button
-                            className={`${styles.measurementIconButton} ${styles.measurementIconButtonDanger}`}
-                            onClick={() => removeMeasurement(measurement.id)}
-                            aria-label="Quitar medicion"
-                            title="Quitar medicion"
-                            type="button"
-                          >
-                            <ActionIcon type="clear" />
-                          </button>
-                        </div>
-                        <div className={styles.measurementControlsGrid}>
-                          <label className={styles.measurementControl}>
-                            <span>Etiqueta</span>
-                            <select
-                              className={styles.measurementSelect}
-                              value={measurement.labelOrientation}
-                              onChange={(event) => updateMeasurementLabelOrientation(measurement.id, event.target.value as MeasurementLabelOrientation)}
-                              aria-label="Orientacion de etiqueta"
-                            >
-                              {MEASUREMENT_ORIENTATION_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                          <label className={styles.measurementControl}>
-                            <span>Extremos</span>
-                            <select
-                              className={styles.measurementSelect}
-                              value={measurement.endCap}
-                              onChange={(event) => updateMeasurementEndCap(measurement.id, event.target.value as MeasurementEndCap)}
-                              aria-label="Terminacion de medicion"
-                            >
-                              {MEASUREMENT_END_CAP_OPTIONS.map((option) => (
-                                <option key={option.value} value={option.value}>
-                                  {option.label}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-                        </div>
+                        {!measurement.collapsed ? (
+                          <>
+                            <div className={styles.measurementActionRow}>
+                              <button
+                                className={styles.measurementIconButton}
+                                onClick={() => toggleMeasurementLabelVisibility(measurement.id)}
+                                aria-label={measurement.showLabel ? "Ocultar etiqueta" : "Mostrar etiqueta"}
+                                title={measurement.showLabel ? "Ocultar etiqueta" : "Mostrar etiqueta"}
+                                type="button"
+                              >
+                                <ActionIcon type={measurement.showLabel ? "hide" : "show"} />
+                              </button>
+                              <button
+                                className={styles.measurementIconButton}
+                                onClick={() => resetMeasurementLabelPosition(measurement.id)}
+                                aria-label="Resetear posicion de etiqueta"
+                                title="Resetear posicion de etiqueta"
+                                type="button"
+                                disabled={!measurement.manualLabelPosition}
+                              >
+                                <ActionIcon type="reset" />
+                              </button>
+                              <button
+                                className={`${styles.measurementIconButton} ${styles.measurementIconButtonDanger}`}
+                                onClick={() => removeMeasurement(measurement.id)}
+                                aria-label="Quitar medicion"
+                                title="Quitar medicion"
+                                type="button"
+                              >
+                                <ActionIcon type="clear" />
+                              </button>
+                            </div>
+                            <div className={styles.measurementControlsGrid}>
+                              <label className={styles.measurementControl}>
+                                <span>Etiqueta</span>
+                                <select
+                                  className={styles.measurementSelect}
+                                  value={measurement.labelOrientation}
+                                  onChange={(event) => updateMeasurementLabelOrientation(measurement.id, event.target.value as MeasurementLabelOrientation)}
+                                  aria-label="Orientacion de etiqueta"
+                                >
+                                  {MEASUREMENT_ORIENTATION_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label className={styles.measurementControl}>
+                                <span>Extremos</span>
+                                <select
+                                  className={styles.measurementSelect}
+                                  value={measurement.endCap}
+                                  onChange={(event) => updateMeasurementEndCap(measurement.id, event.target.value as MeasurementEndCap)}
+                                  aria-label="Terminacion de medicion"
+                                >
+                                  {MEASUREMENT_END_CAP_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            </div>
+                          </>
+                        ) : null}
                       </div>
                     </div>
                   ))}
@@ -2301,7 +2352,7 @@ export default function Home() {
       case "areas":
         return (
           <div className={styles.block}>
-            <button className={styles.blockHeader} onClick={() => toggleSection("areas")} type="button" aria-expanded={!collapsedSections.areas}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("areas")} type="button" aria-expanded={!collapsedSections.areas} data-panel-drag-handle="true" draggable onDragStart={(event) => handlePanelDragStart(event, "areas")} onDragEnd={handlePanelDragEnd}>
               <span className={styles.blockHeaderTitle}>
                 <DragHandleIcon />
                 <span className={styles.label}>Areas</span>
@@ -2312,47 +2363,64 @@ export default function Home() {
               areas.length ? (
                 <div className={styles.measurementList}>
                   {displayedAreas.map((area) => (
-                    <div key={area.id} className={styles.measurementItem}>
+                    <div
+                      key={area.id}
+                      className={styles.measurementItem}
+                      data-collapsed={area.collapsed ? "true" : "false"}
+                      onMouseEnter={() => setHoveredAnnotation({ kind: "area", id: area.id })}
+                      onMouseLeave={() => setHoveredAnnotation((current) => (current?.kind === "area" && current.id === area.id ? null : current))}
+                    >
                       <div className={styles.measurementHeaderRow}>
                         <div className={styles.measurementIdentity}>
                           <span className={styles.measurementDot} style={{ backgroundColor: area.color }} aria-hidden="true" />
                           <input className={styles.measurementNameInput} value={area.name} onChange={(event) => updateAreaName(area.id, event.target.value)} aria-label="Nombre de area" />
                         </div>
+                        <button
+                          className={styles.measurementCollapseButton}
+                          onClick={() => toggleAreaCollapsed(area.id)}
+                          aria-label={area.collapsed ? "Expandir area" : "Minimizar area"}
+                          title={area.collapsed ? "Expandir area" : "Minimizar area"}
+                          type="button"
+                        >
+                          <CollapseIcon collapsed={area.collapsed} />
+                        </button>
                       </div>
                       <div className={styles.measurementContent}>
                         <span className={styles.measurementValue}>
                           {formatNumber(area.display.value)} {area.display.unitLabel}
                         </span>
-                        <div className={styles.measurementActionRow}>
-                          <button
-                            className={styles.measurementIconButton}
-                            onClick={() => toggleAreaLabelVisibility(area.id)}
-                            aria-label={area.showLabel ? "Ocultar etiqueta de area" : "Mostrar etiqueta de area"}
-                            title={area.showLabel ? "Ocultar etiqueta de area" : "Mostrar etiqueta de area"}
-                            type="button"
-                          >
-                            <ActionIcon type={area.showLabel ? "hide" : "show"} />
-                          </button>
-                          <button
-                            className={styles.measurementIconButton}
-                            onClick={() => resetAreaLabelPosition(area.id)}
-                            aria-label="Resetear posicion de etiqueta de area"
-                            title="Resetear posicion de etiqueta de area"
-                            type="button"
-                            disabled={!area.manualLabelPosition}
-                          >
-                            <ActionIcon type="reset" />
-                          </button>
-                          <button
-                            className={`${styles.measurementIconButton} ${styles.measurementIconButtonDanger}`}
-                            onClick={() => removeArea(area.id)}
-                            aria-label="Quitar area"
-                            title="Quitar area"
-                            type="button"
-                          >
-                            <ActionIcon type="clear" />
-                          </button>
-                        </div>
+                        {!area.collapsed ? (
+                          <div className={styles.measurementActionRow}>
+                            <button
+                              className={styles.measurementIconButton}
+                              onClick={() => toggleAreaLabelVisibility(area.id)}
+                              aria-label={area.showLabel ? "Ocultar etiqueta de area" : "Mostrar etiqueta de area"}
+                              title={area.showLabel ? "Ocultar etiqueta de area" : "Mostrar etiqueta de area"}
+                              type="button"
+                            >
+                              <ActionIcon type={area.showLabel ? "hide" : "show"} />
+                            </button>
+                            <button
+                              className={styles.measurementIconButton}
+                              onClick={() => resetAreaLabelPosition(area.id)}
+                              aria-label="Resetear posicion de etiqueta de area"
+                              title="Resetear posicion de etiqueta de area"
+                              type="button"
+                              disabled={!area.manualLabelPosition}
+                            >
+                              <ActionIcon type="reset" />
+                            </button>
+                            <button
+                              className={`${styles.measurementIconButton} ${styles.measurementIconButtonDanger}`}
+                              onClick={() => removeArea(area.id)}
+                              aria-label="Quitar area"
+                              title="Quitar area"
+                              type="button"
+                            >
+                              <ActionIcon type="clear" />
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ))}
@@ -2375,9 +2443,6 @@ export default function Home() {
           <div
             key={panelId}
             className={styles.panelShell}
-            draggable
-            onDragStart={(event) => handlePanelDragStart(event, panelId)}
-            onDragEnd={handlePanelDragEnd}
             onDragOver={(event) => handlePanelDragOver(event, panelId)}
             onDragLeave={(event) => handlePanelDragLeave(event, panelId)}
             onDrop={(event) => handlePanelDrop(event, column, panelId)}
@@ -2387,7 +2452,6 @@ export default function Home() {
                 ? dropTarget.position
                 : "none"
             }
-            title="Arrastra para mover este panel"
           >
             {renderPanel(panelId)}
           </div>
@@ -2547,6 +2611,7 @@ export default function Home() {
                             ? (event, labelPoint) => startMeasurementLabelDrag(event, measurement.id, labelPoint)
                             : undefined
                         }
+                        highlighted={hoveredAnnotation?.kind === "measurement" && hoveredAnnotation.id === measurement.id}
                       />
                     ))}
 
@@ -2564,6 +2629,7 @@ export default function Home() {
                             ? (event, labelPoint) => startAreaLabelDrag(event, area.id, labelPoint)
                             : undefined
                         }
+                        highlighted={hoveredAnnotation?.kind === "area" && hoveredAnnotation.id === area.id}
                       />
                     ))}
 
@@ -2671,6 +2737,7 @@ function MeasurementLine({
   endCap = "circle",
   manualLabelPosition = null,
   showLabel = true,
+  highlighted = false,
   onLabelPointerDown,
 }: {
   points: Point[];
@@ -2682,6 +2749,7 @@ function MeasurementLine({
   endCap?: MeasurementEndCap;
   manualLabelPosition?: Point | null;
   showLabel?: boolean;
+  highlighted?: boolean;
   onLabelPointerDown?: (event: React.PointerEvent<SVGGElement>, labelPoint: Point) => void;
 }) {
   if (points.length === 0) {
@@ -2706,12 +2774,25 @@ function MeasurementLine({
         points={points.map((point) => `${point.x},${point.y}`).join(" ")}
         fill="none"
         stroke={color}
-        strokeWidth={metrics.lineWidth}
+        strokeWidth={highlighted ? metrics.lineWidth * 1.7 : metrics.lineWidth}
+        opacity={highlighted ? 1 : 0.96}
         strokeLinecap="round"
         strokeLinejoin="round"
         strokeDasharray={dashed ? "8 6" : "0"}
         pointerEvents="none"
       />
+      {highlighted ? (
+        <polyline
+          points={points.map((point) => `${point.x},${point.y}`).join(" ")}
+          fill="none"
+          stroke={color}
+          strokeWidth={metrics.lineWidth * 3.6}
+          strokeOpacity="0.18"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          pointerEvents="none"
+        />
+      ) : null}
       {endCap === "circle" ? (
         <>
           {points.map((point, index) => (
@@ -2756,8 +2837,8 @@ function MeasurementLine({
             width={labelBox.width}
             height={labelBox.height}
             rx={labelBox.radius}
-            fill="rgba(6, 10, 17, 0.84)"
-            stroke={onLabelPointerDown ? "rgba(255, 255, 255, 0.28)" : "rgba(255, 255, 255, 0.08)"}
+            fill={highlighted ? "rgba(6, 10, 17, 0.92)" : "rgba(6, 10, 17, 0.84)"}
+            stroke={highlighted ? "rgba(255, 255, 255, 0.44)" : onLabelPointerDown ? "rgba(255, 255, 255, 0.28)" : "rgba(255, 255, 255, 0.08)"}
             strokeDasharray={onLabelPointerDown ? "4 3" : undefined}
           />
           {onLabelPointerDown ? (
@@ -2793,6 +2874,7 @@ function AreaShape({
   open = false,
   manualLabelPosition = null,
   showLabel = true,
+  highlighted = false,
   onLabelPointerDown,
 }: {
   points: Point[];
@@ -2802,6 +2884,7 @@ function AreaShape({
   open?: boolean;
   manualLabelPosition?: Point | null;
   showLabel?: boolean;
+  highlighted?: boolean;
   onLabelPointerDown?: (event: React.PointerEvent<SVGGElement>, labelPoint: Point) => void;
 }) {
   if (points.length === 0) {
@@ -2820,13 +2903,25 @@ function AreaShape({
       <path
         d={finalPath}
         fill={open ? "transparent" : color}
-        fillOpacity={open ? 0 : 0.16}
+        fillOpacity={open ? 0 : highlighted ? 0.24 : 0.16}
         stroke={color}
-        strokeWidth={metrics.lineWidth}
+        strokeWidth={highlighted ? metrics.lineWidth * 1.7 : metrics.lineWidth}
         strokeLinejoin="round"
         strokeLinecap="round"
         strokeDasharray={open ? "8 6" : "0"}
       />
+      {highlighted ? (
+        <path
+          d={finalPath}
+          fill="transparent"
+          stroke={color}
+          strokeWidth={metrics.lineWidth * 3.8}
+          strokeOpacity="0.16"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          pointerEvents="none"
+        />
+      ) : null}
       {points.map((point, index) => (
         <circle key={`${point.x}-${point.y}-${index}`} cx={point.x} cy={point.y} r={metrics.pointRadius} fill={color} />
       ))}
@@ -2844,8 +2939,8 @@ function AreaShape({
             width={labelBox.width}
             height={labelBox.height}
             rx={labelBox.radius}
-            fill="rgba(6, 10, 17, 0.84)"
-            stroke={onLabelPointerDown ? "rgba(255, 255, 255, 0.28)" : "rgba(255, 255, 255, 0.08)"}
+            fill={highlighted ? "rgba(6, 10, 17, 0.92)" : "rgba(6, 10, 17, 0.84)"}
+            stroke={highlighted ? "rgba(255, 255, 255, 0.44)" : onLabelPointerDown ? "rgba(255, 255, 255, 0.28)" : "rgba(255, 255, 255, 0.08)"}
             strokeDasharray={onLabelPointerDown ? "4 3" : undefined}
           />
           {onLabelPointerDown ? (
