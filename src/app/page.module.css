@@ -77,6 +77,7 @@
 }
 
 .panelShell {
+  position: relative;
   transition:
     opacity 0.16s ease,
     transform 0.16s ease;
@@ -84,6 +85,27 @@
 
 .panelShell[data-dragging="true"] {
   opacity: 0.45;
+}
+
+.panelShell[data-drop-position="before"]::before,
+.panelShell[data-drop-position="after"]::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(36, 55, 123, 0.12), rgba(36, 55, 123, 0.85), rgba(36, 55, 123, 0.12));
+  z-index: 3;
+  pointer-events: none;
+}
+
+.panelShell[data-drop-position="before"]::before {
+  top: -7px;
+}
+
+.panelShell[data-drop-position="after"]::after {
+  bottom: -7px;
 }
 
 .sidebarDropZone {
@@ -134,6 +156,13 @@
   text-align: left;
 }
 
+.blockHeaderTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .label {
   margin-bottom: 10px;
   font-size: 0.72rem;
@@ -145,6 +174,14 @@
 
 .blockHeader .label {
   margin-bottom: 0;
+}
+
+.dragHandleIcon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  fill: var(--text-muted);
+  opacity: 0.72;
 }
 
 .collapseIcon {
@@ -616,7 +653,7 @@
 }
 
 .stageOverlay {
-  pointer-events: none;
+  pointer-events: auto;
   overflow: visible;
 }
 
@@ -800,14 +837,83 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 10px;
-  padding: 12px;
-  border-radius: 16px;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
   background: rgba(248, 250, 255, 0.96);
   border: 1px solid rgba(17, 31, 80, 0.06);
 }
 
+.measurementHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.measurementIdentity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.measurementDot {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.82), 0 4px 10px rgba(17, 31, 80, 0.16);
+}
+
+.measurementActionRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+
+.measurementIconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(17, 31, 80, 0.08);
+  color: var(--brand-700);
+  box-shadow: inset 0 0 0 1px rgba(17, 31, 80, 0.06);
+  cursor: pointer;
+  transition:
+    transform 0.16s ease,
+    opacity 0.16s ease,
+    background-color 0.16s ease;
+}
+
+.measurementIconButton:hover {
+  transform: translateY(-1px);
+}
+
+.measurementIconButton:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.measurementIconButtonDanger {
+  background: rgba(161, 48, 48, 0.1);
+  color: #8d2230;
+}
+
 .measurementContent {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -819,7 +925,6 @@
 .measurementNameInput {
   display: block;
   width: 100%;
-  margin-bottom: 4px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -835,17 +940,39 @@
   color: #163847;
 }
 
-.measurementItem span {
+.measurementValue {
   display: block;
   color: #64748b;
-  font-size: 0.88rem;
+  font-size: 0.94rem;
   line-height: 1.35;
+}
+
+.measurementControlsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.measurementControl {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.measurementControl span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  line-height: 1.2;
 }
 
 .measurementSelect {
   width: 100%;
-  min-height: 38px;
-  margin-top: 8px;
+  min-height: 36px;
   padding: 0 12px;
   border: 1px solid rgba(17, 31, 80, 0.08);
   border-radius: 12px;
@@ -855,10 +982,14 @@
   box-shadow: inset 0 1px 3px rgba(17, 31, 80, 0.03);
 }
 
-.measurementItem button {
-  width: 100%;
-  background: rgba(17, 31, 80, 0.1);
-  color: var(--brand-700);
+.measurementLabelDraggable {
+  cursor: grab;
+  touch-action: none;
+  pointer-events: all;
+}
+
+.measurementLabelDraggable:active {
+  cursor: grabbing;
 }
 
 .emptyState {
@@ -957,5 +1088,9 @@
   .presetActions button,
   .presetDeleteButton {
     flex: 1;
+  }
+
+  .measurementControlsGrid {
+    grid-template-columns: 1fr;
   }
 }

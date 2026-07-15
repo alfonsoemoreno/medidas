@@ -67,17 +67,16 @@ type SavedCalibrationPreset = {
 type Measurement = {
   id: string;
   name: string;
-  start: Point;
-  end: Point;
+  points: Point[];
   value: number;
   unit: string;
   color: string;
-  labelPosition: MeasurementLabelPosition;
   labelOrientation: MeasurementLabelOrientation;
   endCap: MeasurementEndCap;
+  manualLabelPosition: Point | null;
+  showLabel: boolean;
 };
 
-type MeasurementLabelPosition = "left" | "center" | "right";
 type MeasurementLabelOrientation = "horizontal" | "aligned";
 type MeasurementEndCap = "circle" | "tick";
 
@@ -88,6 +87,8 @@ type AreaMeasurement = {
   value: number;
   unit: string;
   color: string;
+  manualLabelPosition: Point | null;
+  showLabel: boolean;
 };
 
 type AreaDisplayUnit = "auto" | "um2" | "mm2" | "cm2" | "m2";
@@ -96,6 +97,7 @@ type CollapsibleSection = "tool" | "calibration" | "size" | "output" | "measurem
 type PanelId = CollapsibleSection;
 type PanelColumn = "left" | "right";
 type PanelLayout = Record<PanelColumn, PanelId[]>;
+type DropPosition = "before" | "after";
 
 type Viewport = {
   width: number;
@@ -141,7 +143,7 @@ const TOOL_LABELS: Record<ToolMode, string> = {
 const TOOL_HINTS: Record<ToolMode, string> = {
   navigate: "Arrastra para recorrer la imagen.",
   calibrate: "Define la escala con 2 puntos o con equivalencia manual.",
-  measure: "Haz 2 clics para medir una distancia.",
+  measure: "Marca varios puntos consecutivos y luego cierra la medicion.",
   area: "Marca vertices y luego pulsa \"Cerrar area\".",
 };
 
@@ -161,11 +163,6 @@ const LENGTH_UNIT_TO_METERS: Record<string, number> = {
   cm: 1e-2,
   m: 1,
 };
-const MEASUREMENT_LABEL_OPTIONS: Array<{ value: MeasurementLabelPosition; label: string }> = [
-  { value: "left", label: "Izquierda" },
-  { value: "center", label: "Centro" },
-  { value: "right", label: "Derecha" },
-];
 const MEASUREMENT_ORIENTATION_OPTIONS: Array<{ value: MeasurementLabelOrientation; label: string }> = [
   { value: "horizontal", label: "Horizontal" },
   { value: "aligned", label: "Seguir linea" },
@@ -323,12 +320,39 @@ function CollapseIcon({ collapsed }: { collapsed: boolean }) {
   );
 }
 
+function DragHandleIcon() {
+  return (
+    <svg className={styles.dragHandleIcon} viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <circle cx="7" cy="6" r="1.1" />
+      <circle cx="13" cy="6" r="1.1" />
+      <circle cx="7" cy="10" r="1.1" />
+      <circle cx="13" cy="10" r="1.1" />
+      <circle cx="7" cy="14" r="1.1" />
+      <circle cx="13" cy="14" r="1.1" />
+    </svg>
+  );
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
 function distanceBetween(start: Point, end: Point) {
   return Math.hypot(end.x - start.x, end.y - start.y);
+}
+
+function polylineLength(points: Point[]) {
+  if (points.length < 2) {
+    return 0;
+  }
+
+  let total = 0;
+
+  for (let index = 1; index < points.length; index += 1) {
+    total += distanceBetween(points[index - 1], points[index]);
+  }
+
+  return total;
 }
 
 function formatNumber(value: number) {
@@ -604,22 +628,69 @@ function polygonCentroid(points: Point[]) {
   };
 }
 
-function lineLabelPosition(start: Point, end: Point, offset = 22, position: MeasurementLabelPosition = "center") {
-  const factor = position === "left" ? 0.24 : position === "right" ? 0.76 : 0.5;
-  const center = {
-    x: start.x + (end.x - start.x) * factor,
-    y: start.y + (end.y - start.y) * factor,
-  };
-  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+function measurementPathPosition(
+  points: Point[],
+  offset = 22,
+) {
+  if (points.length === 0) {
+    return {
+      point: { x: 0, y: 0 },
+      angle: 0,
+    };
+  }
+
+  if (points.length === 1) {
+    return {
+      point: points[0],
+      angle: 0,
+    };
+  }
+
+  const factor = 0.5;
+  const totalLength = polylineLength(points);
+  const targetLength = totalLength * factor;
+  let accumulated = 0;
+
+  for (let index = 1; index < points.length; index += 1) {
+    const start = points[index - 1];
+    const end = points[index];
+    const segmentLength = distanceBetween(start, end);
+
+    if (segmentLength <= 0) {
+      continue;
+    }
+
+    if (accumulated + segmentLength >= targetLength || index === points.length - 1) {
+      const segmentFactor = clamp((targetLength - accumulated) / segmentLength, 0, 1);
+      const center = {
+        x: start.x + (end.x - start.x) * segmentFactor,
+        y: start.y + (end.y - start.y) * segmentFactor,
+      };
+      const angle = Math.atan2(end.y - start.y, end.x - start.x);
+
+      return {
+        point: {
+          x: center.x + Math.sin(angle) * offset,
+          y: center.y - Math.cos(angle) * offset,
+        },
+        angle,
+      };
+    }
+
+    accumulated += segmentLength;
+  }
+
+  const fallbackStart = points[points.length - 2];
+  const fallbackEnd = points[points.length - 1];
+  const fallbackAngle = Math.atan2(fallbackEnd.y - fallbackStart.y, fallbackEnd.x - fallbackStart.x);
 
   return {
-    x: center.x + Math.sin(angle) * offset,
-    y: center.y - Math.cos(angle) * offset,
+    point: {
+      x: fallbackEnd.x + Math.sin(fallbackAngle) * offset,
+      y: fallbackEnd.y - Math.cos(fallbackAngle) * offset,
+    },
+    angle: fallbackAngle,
   };
-}
-
-function lineAngle(start: Point, end: Point) {
-  return Math.atan2(end.y - start.y, end.x - start.x);
 }
 
 export default function Home() {
@@ -629,6 +700,11 @@ export default function Home() {
   const dragRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
   const gestureZoomRef = useRef<{ active: boolean; baseZoom: number } | null>(null);
+  const labelDragRef = useRef<
+    | { kind: "measurement"; id: string; pointerId: number; offset: Point }
+    | { kind: "area"; id: string; pointerId: number; offset: Point }
+    | null
+  >(null);
 
   const [viewport, setViewport] = useState<Viewport>({ width: 0, height: 0 });
   const [imageAsset, setImageAsset] = useState<ImageAsset | null>(null);
@@ -637,7 +713,7 @@ export default function Home() {
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [showScaleBar, setShowScaleBar] = useState(true);
   const [calibrationDraft, setCalibrationDraft] = useState<Point[]>([]);
-  const [measurementDraft, setMeasurementDraft] = useState<Point | null>(null);
+  const [measurementDraft, setMeasurementDraft] = useState<Point[]>([]);
   const [areaDraft, setAreaDraft] = useState<Point[]>([]);
   const [calibrationMethod, setCalibrationMethod] = useState<CalibrationMethod>("points");
   const [knownDistance, setKnownDistance] = useState("100");
@@ -659,6 +735,7 @@ export default function Home() {
   const [isInstalled, setIsInstalled] = useState(false);
   const [panelLayout, setPanelLayout] = useState<PanelLayout>(DEFAULT_PANEL_LAYOUT);
   const [draggedPanel, setDraggedPanel] = useState<PanelId | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ panelId: PanelId; position: DropPosition } | null>(null);
   const [collapsedSections, setCollapsedSections] = useState<Record<CollapsibleSection, boolean>>({
     tool: false,
     calibration: false,
@@ -888,6 +965,68 @@ export default function Home() {
     gestureZoomRef.current = null;
   });
 
+  const handleLabelPointerMove = useEffectEvent((event: PointerEvent) => {
+    const activeDrag = labelDragRef.current;
+
+    if (!activeDrag || activeDrag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const point = screenToImage(event.clientX, event.clientY);
+
+    if (!point || !imageAsset) {
+      return;
+    }
+
+    const nextPoint = {
+      x: clamp(point.x - activeDrag.offset.x, 0, imageAsset.width),
+      y: clamp(point.y - activeDrag.offset.y, 0, imageAsset.height),
+    };
+
+    if (activeDrag.kind === "measurement") {
+      setMeasurements((current) =>
+        current.map((measurement) =>
+          measurement.id === activeDrag.id
+            ? {
+                ...measurement,
+                manualLabelPosition: nextPoint,
+              }
+            : measurement,
+        ),
+      );
+      return;
+    }
+
+    setAreas((current) =>
+      current.map((area) =>
+        area.id === activeDrag.id
+          ? {
+              ...area,
+              manualLabelPosition: nextPoint,
+            }
+          : area,
+      ),
+    );
+  });
+
+  const handleLabelPointerEnd = useEffectEvent((event: PointerEvent) => {
+    if (labelDragRef.current?.pointerId === event.pointerId) {
+      labelDragRef.current = null;
+    }
+  });
+
+  useEffect(() => {
+    window.addEventListener("pointermove", handleLabelPointerMove, { passive: true });
+    window.addEventListener("pointerup", handleLabelPointerEnd);
+    window.addEventListener("pointercancel", handleLabelPointerEnd);
+
+    return () => {
+      window.removeEventListener("pointermove", handleLabelPointerMove);
+      window.removeEventListener("pointerup", handleLabelPointerEnd);
+      window.removeEventListener("pointercancel", handleLabelPointerEnd);
+    };
+  }, [handleLabelPointerEnd, handleLabelPointerMove]);
+
   useEffect(() => {
     if (!storageReady) {
       return;
@@ -933,7 +1072,7 @@ export default function Home() {
     setPan({ x: 0, y: 0 });
     setShowScaleBar(true);
     setCalibrationDraft([]);
-    setMeasurementDraft(null);
+    setMeasurementDraft([]);
     setAreaDraft([]);
     setCalibration(null);
     setMeasurements([]);
@@ -948,7 +1087,7 @@ export default function Home() {
     }
 
     if (mode !== "measure") {
-      setMeasurementDraft(null);
+      setMeasurementDraft([]);
     }
 
     if (mode !== "area") {
@@ -1041,7 +1180,7 @@ export default function Home() {
       ),
     );
 
-    setMeasurementDraft(null);
+    setMeasurementDraft([]);
     setAreaDraft([]);
     setToolMode("measure");
   }
@@ -1052,7 +1191,7 @@ export default function Home() {
     setManualPixels(formatNumber(preset.pixelsPerUnit * preset.knownDistance));
     setUnit(preset.unit);
     setCalibrationDraft([]);
-    setMeasurementDraft(null);
+    setMeasurementDraft([]);
     setAreaDraft([]);
     setShowScaleBar(true);
     setCalibrationMethod("manual");
@@ -1089,7 +1228,7 @@ export default function Home() {
     }
 
     if (toolMode === "calibrate" && calibrationMethod === "points") {
-      setMeasurementDraft(null);
+      setMeasurementDraft([]);
       setAreaDraft([]);
       setCalibrationDraft((current) => (current.length >= 2 ? [point] : [...current, point]));
       return;
@@ -1097,35 +1236,12 @@ export default function Home() {
 
     if (toolMode === "measure" && calibration) {
       setAreaDraft([]);
-      if (!measurementDraft) {
-        setMeasurementDraft(point);
-        return;
-      }
-
-      const value = distanceBetween(measurementDraft, point) / calibration.pixelsPerUnit;
-
-      setMeasurements((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          name: makeMeasurementName(current.length),
-          start: measurementDraft,
-          end: point,
-          value,
-          unit: calibration.unit,
-          color: MEASUREMENT_COLORS[current.length % MEASUREMENT_COLORS.length],
-          labelPosition: "center",
-          labelOrientation: "horizontal",
-          endCap: "circle",
-        },
-      ]);
-
-      setMeasurementDraft(null);
+      setMeasurementDraft((current) => [...current, point]);
       return;
     }
 
     if (toolMode === "area" && calibration) {
-      setMeasurementDraft(null);
+      setMeasurementDraft([]);
       setAreaDraft((current) => [...current, point]);
     }
   }
@@ -1323,6 +1439,25 @@ export default function Home() {
 
   function handlePanelDragEnd() {
     setDraggedPanel(null);
+    setDropTarget(null);
+  }
+
+  function handlePanelDragOver(event: React.DragEvent<HTMLDivElement>, panelId: PanelId) {
+    event.preventDefault();
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position: DropPosition = event.clientY > rect.top + rect.height / 2 ? "after" : "before";
+    setDropTarget({ panelId, position });
+  }
+
+  function handlePanelDragLeave(event: React.DragEvent<HTMLDivElement>, panelId: PanelId) {
+    const relatedTarget = event.relatedTarget as Node | null;
+
+    if (relatedTarget && event.currentTarget.contains(relatedTarget)) {
+      return;
+    }
+
+    setDropTarget((current) => (current?.panelId === panelId ? null : current));
   }
 
   function handlePanelDrop(
@@ -1341,10 +1476,10 @@ export default function Home() {
       return;
     }
 
-    const rect = event.currentTarget.getBoundingClientRect();
-    const insertAfter = event.clientY > rect.top + rect.height / 2;
+    const insertAfter = dropTarget?.panelId === targetPanelId ? dropTarget.position === "after" : false;
     movePanel(draggedPanel, targetColumn, targetIndex + (insertAfter ? 1 : 0));
     setDraggedPanel(null);
+    setDropTarget(null);
   }
 
   function handleColumnDrop(event: React.DragEvent<HTMLDivElement>, column: PanelColumn) {
@@ -1356,11 +1491,12 @@ export default function Home() {
 
     movePanel(draggedPanel, column, panelLayout[column].length);
     setDraggedPanel(null);
+    setDropTarget(null);
   }
 
   function clearDrafts() {
     setCalibrationDraft([]);
-    setMeasurementDraft(null);
+    setMeasurementDraft([]);
     setAreaDraft([]);
   }
 
@@ -1375,19 +1511,6 @@ export default function Home() {
           ? {
               ...measurement,
               name,
-            }
-          : measurement,
-      ),
-    );
-  }
-
-  function updateMeasurementLabelPosition(id: string, labelPosition: MeasurementLabelPosition) {
-    setMeasurements((current) =>
-      current.map((measurement) =>
-        measurement.id === id
-          ? {
-              ...measurement,
-              labelPosition,
             }
           : measurement,
       ),
@@ -1420,6 +1543,112 @@ export default function Home() {
     );
   }
 
+  function resetMeasurementLabelPosition(id: string) {
+    setMeasurements((current) =>
+      current.map((measurement) =>
+        measurement.id === id
+          ? {
+              ...measurement,
+              manualLabelPosition: null,
+            }
+          : measurement,
+      ),
+    );
+  }
+
+  function toggleMeasurementLabelVisibility(id: string) {
+    setMeasurements((current) =>
+      current.map((measurement) =>
+        measurement.id === id
+          ? {
+              ...measurement,
+              showLabel: !measurement.showLabel,
+            }
+          : measurement,
+      ),
+    );
+  }
+
+  function finishMeasurementDraft() {
+    if (!calibration || measurementDraft.length < 2) {
+      return;
+    }
+
+    const value = polylineLength(measurementDraft) / calibration.pixelsPerUnit;
+
+    setMeasurements((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        name: makeMeasurementName(current.length),
+        points: measurementDraft,
+        value,
+        unit: calibration.unit,
+        color: MEASUREMENT_COLORS[current.length % MEASUREMENT_COLORS.length],
+        labelOrientation: "horizontal",
+        endCap: "circle",
+        manualLabelPosition: null,
+        showLabel: true,
+      },
+    ]);
+
+    setMeasurementDraft([]);
+  }
+
+  function undoMeasurementPoint() {
+    setMeasurementDraft((current) => current.slice(0, -1));
+  }
+
+  function startMeasurementLabelDrag(
+    event: React.PointerEvent<SVGGElement>,
+    measurementId: string,
+    labelPoint: Point,
+  ) {
+    const point = screenToImage(event.clientX, event.clientY);
+
+    if (!point) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    labelDragRef.current = {
+      kind: "measurement",
+      id: measurementId,
+      pointerId: event.pointerId,
+      offset: {
+        x: point.x - labelPoint.x,
+        y: point.y - labelPoint.y,
+      },
+    };
+  }
+
+  function startAreaLabelDrag(
+    event: React.PointerEvent<SVGGElement>,
+    areaId: string,
+    labelPoint: Point,
+  ) {
+    const point = screenToImage(event.clientX, event.clientY);
+
+    if (!point) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    labelDragRef.current = {
+      kind: "area",
+      id: areaId,
+      pointerId: event.pointerId,
+      offset: {
+        x: point.x - labelPoint.x,
+        y: point.y - labelPoint.y,
+      },
+    };
+  }
+
   function finishAreaDraft() {
     if (!calibration || areaDraft.length < 3) {
       return;
@@ -1436,6 +1665,8 @@ export default function Home() {
         value,
         unit: calibration.unit,
         color: MEASUREMENT_COLORS[current.length % MEASUREMENT_COLORS.length],
+        manualLabelPosition: null,
+        showLabel: true,
       },
     ]);
 
@@ -1457,6 +1688,32 @@ export default function Home() {
           ? {
               ...area,
               name,
+            }
+          : area,
+      ),
+    );
+  }
+
+  function resetAreaLabelPosition(id: string) {
+    setAreas((current) =>
+      current.map((area) =>
+        area.id === id
+          ? {
+              ...area,
+              manualLabelPosition: null,
+            }
+          : area,
+      ),
+    );
+  }
+
+  function toggleAreaLabelVisibility(id: string) {
+    setAreas((current) =>
+      current.map((area) =>
+        area.id === id
+          ? {
+              ...area,
+              showLabel: !area.showLabel,
             }
           : area,
       ),
@@ -1503,18 +1760,21 @@ export default function Home() {
         color: area.color,
         metrics: exportMeasurementMetrics,
         scale: exportScale,
+        manualLabelPosition: area.manualLabelPosition,
+        showLabel: area.showLabel,
       });
     }
 
     for (const measurement of measurements) {
-      drawMeasurement(context, measurement.start, measurement.end, {
+      drawMeasurement(context, measurement.points, {
         label: `${measurement.name} - ${formatNumber(measurement.value)} ${measurement.unit}`,
         color: measurement.color,
         metrics: exportMeasurementMetrics,
         scale: exportScale,
-        labelPosition: measurement.labelPosition,
         labelOrientation: measurement.labelOrientation,
         endCap: measurement.endCap,
+        manualLabelPosition: measurement.manualLabelPosition,
+        showLabel: measurement.showLabel,
       });
     }
 
@@ -1588,6 +1848,8 @@ export default function Home() {
 
   const draftCalibrationPixels =
     calibrationDraft.length === 2 ? distanceBetween(calibrationDraft[0], calibrationDraft[1]) : 0;
+  const draftMeasurementPixels = polylineLength(measurementDraft);
+  const draftMeasurementValue = calibration ? draftMeasurementPixels / calibration.pixelsPerUnit : 0;
   const draftAreaPixels = polygonArea(areaDraft);
   const draftAreaValue = calibration ? draftAreaPixels / calibration.pixelsPerUnit ** 2 : 0;
   const draftAreaDisplay = calibration
@@ -1626,8 +1888,11 @@ export default function Home() {
     calibration ? `1 ${calibration.unit} = ${formatPixels(calibration.pixelsPerUnit)}` : "Calibra para medir con precision",
     `Mediciones: ${measurements.length}`,
     `Areas: ${areas.length}`,
+    measurements.some((measurement) => measurement.showLabel) || areas.some((area) => area.showLabel)
+      ? "Arrastra cualquier etiqueta para moverla"
+      : null,
     TOOL_HINTS[toolMode],
-  ];
+  ].filter((item): item is string => Boolean(item));
 
   function renderPanel(panelId: PanelId) {
     switch (panelId) {
@@ -1635,7 +1900,10 @@ export default function Home() {
         return (
           <div className={styles.block}>
             <button className={styles.blockHeader} onClick={() => toggleSection("tool")} type="button" aria-expanded={!collapsedSections.tool}>
-              <span className={styles.label}>Herramienta</span>
+              <span className={styles.blockHeaderTitle}>
+                <DragHandleIcon />
+                <span className={styles.label}>Herramienta</span>
+              </span>
               <CollapseIcon collapsed={collapsedSections.tool} />
             </button>
             {!collapsedSections.tool ? (
@@ -1652,6 +1920,32 @@ export default function Home() {
                     </button>
                   ))}
                 </div>
+                {toolMode === "measure" ? (
+                  <div className={styles.toolActions}>
+                    <div className={styles.metaRow}>
+                      <span>Puntos medicion</span>
+                      <strong>{measurementDraft.length}</strong>
+                    </div>
+                    <div className={styles.metaRow}>
+                      <span>Longitud actual</span>
+                      <strong>{measurementDraft.length >= 2 && calibration ? `${formatNumber(draftMeasurementValue)} ${calibration.unit}` : "-"}</strong>
+                    </div>
+                    <div className={styles.buttonStack}>
+                      <button className={styles.ghostButton} onClick={undoMeasurementPoint} disabled={measurementDraft.length === 0}>
+                        <span className={styles.buttonContent}>
+                          <ActionIcon type="undo" />
+                          <span>Deshacer punto</span>
+                        </span>
+                      </button>
+                      <button className={styles.secondaryButton} onClick={finishMeasurementDraft} disabled={measurementDraft.length < 2 || !calibration}>
+                        <span className={styles.buttonContent}>
+                          <ActionIcon type="close" />
+                          <span>Cerrar medicion</span>
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 {toolMode === "area" ? (
                   <div className={styles.toolActions}>
                     <label className={styles.selectField}>
@@ -1698,7 +1992,10 @@ export default function Home() {
         return (
           <div className={styles.block}>
             <button className={styles.blockHeader} onClick={() => toggleSection("calibration")} type="button" aria-expanded={!collapsedSections.calibration}>
-              <span className={styles.label}>Calibracion</span>
+              <span className={styles.blockHeaderTitle}>
+                <DragHandleIcon />
+                <span className={styles.label}>Calibracion</span>
+              </span>
               <CollapseIcon collapsed={collapsedSections.calibration} />
             </button>
             {!collapsedSections.calibration ? (
@@ -1837,7 +2134,10 @@ export default function Home() {
         return (
           <div className={styles.block}>
             <button className={styles.blockHeader} onClick={() => toggleSection("size")} type="button" aria-expanded={!collapsedSections.size}>
-              <span className={styles.label}>Tamano</span>
+              <span className={styles.blockHeaderTitle}>
+                <DragHandleIcon />
+                <span className={styles.label}>Tamano</span>
+              </span>
               <CollapseIcon collapsed={collapsedSections.size} />
             </button>
             {!collapsedSections.size ? (
@@ -1865,7 +2165,10 @@ export default function Home() {
         return (
           <div className={styles.block}>
             <button className={styles.blockHeader} onClick={() => toggleSection("output")} type="button" aria-expanded={!collapsedSections.output}>
-              <span className={styles.label}>Salida</span>
+              <span className={styles.blockHeaderTitle}>
+                <DragHandleIcon />
+                <span className={styles.label}>Salida</span>
+              </span>
               <CollapseIcon collapsed={collapsedSections.output} />
             </button>
             {!collapsedSections.output ? (
@@ -1902,7 +2205,10 @@ export default function Home() {
         return (
           <div className={styles.block}>
             <button className={styles.blockHeader} onClick={() => toggleSection("measurements")} type="button" aria-expanded={!collapsedSections.measurements}>
-              <span className={styles.label}>Mediciones</span>
+              <span className={styles.blockHeaderTitle}>
+                <DragHandleIcon />
+                <span className={styles.label}>Mediciones</span>
+              </span>
               <CollapseIcon collapsed={collapsedSections.measurements} />
             </button>
             {!collapsedSections.measurements ? (
@@ -1910,49 +2216,79 @@ export default function Home() {
                 <div className={styles.measurementList}>
                   {measurements.map((measurement) => (
                     <div key={measurement.id} className={styles.measurementItem}>
+                      <div className={styles.measurementHeaderRow}>
+                        <div className={styles.measurementIdentity}>
+                          <span className={styles.measurementDot} style={{ backgroundColor: measurement.color }} aria-hidden="true" />
+                          <input className={styles.measurementNameInput} value={measurement.name} onChange={(event) => updateMeasurementName(measurement.id, event.target.value)} aria-label="Nombre de medicion" />
+                        </div>
+                      </div>
                       <div className={styles.measurementContent}>
-                        <input className={styles.measurementNameInput} value={measurement.name} onChange={(event) => updateMeasurementName(measurement.id, event.target.value)} aria-label="Nombre de medicion" />
-                        <span>
+                        <span className={styles.measurementValue}>
                           {formatNumber(measurement.value)} {measurement.unit}
                         </span>
-                        <select
-                          className={styles.measurementSelect}
-                          value={measurement.labelPosition}
-                          onChange={(event) => updateMeasurementLabelPosition(measurement.id, event.target.value as MeasurementLabelPosition)}
-                          aria-label="Posicion de etiqueta"
-                        >
-                          {MEASUREMENT_LABEL_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          className={styles.measurementSelect}
-                          value={measurement.labelOrientation}
-                          onChange={(event) => updateMeasurementLabelOrientation(measurement.id, event.target.value as MeasurementLabelOrientation)}
-                          aria-label="Orientacion de etiqueta"
-                        >
-                          {MEASUREMENT_ORIENTATION_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          className={styles.measurementSelect}
-                          value={measurement.endCap}
-                          onChange={(event) => updateMeasurementEndCap(measurement.id, event.target.value as MeasurementEndCap)}
-                          aria-label="Terminacion de medicion"
-                        >
-                          {MEASUREMENT_END_CAP_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
+                        <div className={styles.measurementActionRow}>
+                          <button
+                            className={styles.measurementIconButton}
+                            onClick={() => toggleMeasurementLabelVisibility(measurement.id)}
+                            aria-label={measurement.showLabel ? "Ocultar etiqueta" : "Mostrar etiqueta"}
+                            title={measurement.showLabel ? "Ocultar etiqueta" : "Mostrar etiqueta"}
+                            type="button"
+                          >
+                            <ActionIcon type={measurement.showLabel ? "hide" : "show"} />
+                          </button>
+                          <button
+                            className={styles.measurementIconButton}
+                            onClick={() => resetMeasurementLabelPosition(measurement.id)}
+                            aria-label="Resetear posicion de etiqueta"
+                            title="Resetear posicion de etiqueta"
+                            type="button"
+                            disabled={!measurement.manualLabelPosition}
+                          >
+                            <ActionIcon type="reset" />
+                          </button>
+                          <button
+                            className={`${styles.measurementIconButton} ${styles.measurementIconButtonDanger}`}
+                            onClick={() => removeMeasurement(measurement.id)}
+                            aria-label="Quitar medicion"
+                            title="Quitar medicion"
+                            type="button"
+                          >
+                            <ActionIcon type="clear" />
+                          </button>
+                        </div>
+                        <div className={styles.measurementControlsGrid}>
+                          <label className={styles.measurementControl}>
+                            <span>Etiqueta</span>
+                            <select
+                              className={styles.measurementSelect}
+                              value={measurement.labelOrientation}
+                              onChange={(event) => updateMeasurementLabelOrientation(measurement.id, event.target.value as MeasurementLabelOrientation)}
+                              aria-label="Orientacion de etiqueta"
+                            >
+                              {MEASUREMENT_ORIENTATION_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label className={styles.measurementControl}>
+                            <span>Extremos</span>
+                            <select
+                              className={styles.measurementSelect}
+                              value={measurement.endCap}
+                              onChange={(event) => updateMeasurementEndCap(measurement.id, event.target.value as MeasurementEndCap)}
+                              aria-label="Terminacion de medicion"
+                            >
+                              {MEASUREMENT_END_CAP_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
                       </div>
-                      <button onClick={() => removeMeasurement(measurement.id)}>Quitar</button>
                     </div>
                   ))}
                 </div>
@@ -1966,7 +2302,10 @@ export default function Home() {
         return (
           <div className={styles.block}>
             <button className={styles.blockHeader} onClick={() => toggleSection("areas")} type="button" aria-expanded={!collapsedSections.areas}>
-              <span className={styles.label}>Areas</span>
+              <span className={styles.blockHeaderTitle}>
+                <DragHandleIcon />
+                <span className={styles.label}>Areas</span>
+              </span>
               <CollapseIcon collapsed={collapsedSections.areas} />
             </button>
             {!collapsedSections.areas ? (
@@ -1974,13 +2313,47 @@ export default function Home() {
                 <div className={styles.measurementList}>
                   {displayedAreas.map((area) => (
                     <div key={area.id} className={styles.measurementItem}>
+                      <div className={styles.measurementHeaderRow}>
+                        <div className={styles.measurementIdentity}>
+                          <span className={styles.measurementDot} style={{ backgroundColor: area.color }} aria-hidden="true" />
+                          <input className={styles.measurementNameInput} value={area.name} onChange={(event) => updateAreaName(area.id, event.target.value)} aria-label="Nombre de area" />
+                        </div>
+                      </div>
                       <div className={styles.measurementContent}>
-                        <input className={styles.measurementNameInput} value={area.name} onChange={(event) => updateAreaName(area.id, event.target.value)} aria-label="Nombre de area" />
-                        <span>
+                        <span className={styles.measurementValue}>
                           {formatNumber(area.display.value)} {area.display.unitLabel}
                         </span>
+                        <div className={styles.measurementActionRow}>
+                          <button
+                            className={styles.measurementIconButton}
+                            onClick={() => toggleAreaLabelVisibility(area.id)}
+                            aria-label={area.showLabel ? "Ocultar etiqueta de area" : "Mostrar etiqueta de area"}
+                            title={area.showLabel ? "Ocultar etiqueta de area" : "Mostrar etiqueta de area"}
+                            type="button"
+                          >
+                            <ActionIcon type={area.showLabel ? "hide" : "show"} />
+                          </button>
+                          <button
+                            className={styles.measurementIconButton}
+                            onClick={() => resetAreaLabelPosition(area.id)}
+                            aria-label="Resetear posicion de etiqueta de area"
+                            title="Resetear posicion de etiqueta de area"
+                            type="button"
+                            disabled={!area.manualLabelPosition}
+                          >
+                            <ActionIcon type="reset" />
+                          </button>
+                          <button
+                            className={`${styles.measurementIconButton} ${styles.measurementIconButtonDanger}`}
+                            onClick={() => removeArea(area.id)}
+                            aria-label="Quitar area"
+                            title="Quitar area"
+                            type="button"
+                          >
+                            <ActionIcon type="clear" />
+                          </button>
+                        </div>
                       </div>
-                      <button onClick={() => removeArea(area.id)}>Quitar</button>
                     </div>
                   ))}
                 </div>
@@ -2005,9 +2378,15 @@ export default function Home() {
             draggable
             onDragStart={(event) => handlePanelDragStart(event, panelId)}
             onDragEnd={handlePanelDragEnd}
-            onDragOver={(event) => event.preventDefault()}
+            onDragOver={(event) => handlePanelDragOver(event, panelId)}
+            onDragLeave={(event) => handlePanelDragLeave(event, panelId)}
             onDrop={(event) => handlePanelDrop(event, column, panelId)}
             data-dragging={draggedPanel === panelId ? "true" : "false"}
+            data-drop-position={
+              dropTarget?.panelId === panelId
+                ? dropTarget.position
+                : "none"
+            }
             title="Arrastra para mover este panel"
           >
             {renderPanel(panelId)}
@@ -2130,8 +2509,7 @@ export default function Home() {
                   <svg className={styles.stageOverlay} viewBox={`0 0 ${imageAsset.width} ${imageAsset.height}`}>
                     {calibration?.start && calibration?.end && (
                       <MeasurementLine
-                        start={calibration.start}
-                        end={calibration.end}
+                        points={[calibration.start, calibration.end]}
                         label={`${formatNumber(calibration.knownDistance)} ${calibration.unit}`}
                         color="#f4d35e"
                         dashed
@@ -2141,8 +2519,7 @@ export default function Home() {
 
                     {calibrationDraft.length === 2 && !calibration && (
                       <MeasurementLine
-                        start={calibrationDraft[0]}
-                        end={calibrationDraft[1]}
+                        points={calibrationDraft}
                         label={formatPixels(draftCalibrationPixels)}
                         color="#f4d35e"
                         dashed
@@ -2157,14 +2534,19 @@ export default function Home() {
                     {measurements.map((measurement) => (
                       <MeasurementLine
                         key={measurement.id}
-                        start={measurement.start}
-                        end={measurement.end}
+                        points={measurement.points}
                         label={`${measurement.name} - ${formatNumber(measurement.value)} ${measurement.unit}`}
                         color={measurement.color}
                         metrics={screenMetrics}
-                        labelPosition={measurement.labelPosition}
                         labelOrientation={measurement.labelOrientation}
                         endCap={measurement.endCap}
+                        manualLabelPosition={measurement.manualLabelPosition}
+                        showLabel={measurement.showLabel}
+                        onLabelPointerDown={
+                          measurement.showLabel
+                            ? (event, labelPoint) => startMeasurementLabelDrag(event, measurement.id, labelPoint)
+                            : undefined
+                        }
                       />
                     ))}
 
@@ -2175,6 +2557,13 @@ export default function Home() {
                         label={`${area.name} - ${formatNumber(area.display.value)} ${area.display.unitLabel}`}
                         color={area.color}
                         metrics={screenMetrics}
+                        manualLabelPosition={area.manualLabelPosition}
+                        showLabel={area.showLabel}
+                        onLabelPointerDown={
+                          area.showLabel
+                            ? (event, labelPoint) => startAreaLabelDrag(event, area.id, labelPoint)
+                            : undefined
+                        }
                       />
                     ))}
 
@@ -2192,8 +2581,18 @@ export default function Home() {
                       />
                     )}
 
-                    {measurementDraft && (
-                      <PointHandle point={measurementDraft} color="#ffb347" metrics={screenMetrics} />
+                    {measurementDraft.length >= 2 && calibration && (
+                      <MeasurementLine
+                        points={measurementDraft}
+                        label={`${formatNumber(draftMeasurementValue)} ${calibration.unit}`}
+                        color="#ffb347"
+                        dashed
+                        metrics={screenMetrics}
+                      />
+                    )}
+
+                    {measurementDraft.length === 1 && (
+                      <PointHandle point={measurementDraft[0]} color="#ffb347" metrics={screenMetrics} />
                     )}
 
                     {areaDraft.length === 1 && (
@@ -2263,29 +2662,39 @@ function PointHandle({
 }
 
 function MeasurementLine({
-  start,
-  end,
+  points,
   label,
   color,
   dashed = false,
   metrics,
-  labelPosition = "center",
   labelOrientation = "horizontal",
   endCap = "circle",
+  manualLabelPosition = null,
+  showLabel = true,
+  onLabelPointerDown,
 }: {
-  start: Point;
-  end: Point;
+  points: Point[];
   label: string;
   color: string;
   dashed?: boolean;
   metrics: AnnotationMetrics;
-  labelPosition?: MeasurementLabelPosition;
   labelOrientation?: MeasurementLabelOrientation;
   endCap?: MeasurementEndCap;
+  manualLabelPosition?: Point | null;
+  showLabel?: boolean;
+  onLabelPointerDown?: (event: React.PointerEvent<SVGGElement>, labelPoint: Point) => void;
 }) {
-  const computedLabelPosition = lineLabelPosition(start, end, metrics.labelOffset, labelPosition);
+  if (points.length === 0) {
+    return null;
+  }
+
+  if (points.length === 1) {
+    return <PointHandle point={points[0]} color={color} metrics={metrics} />;
+  }
+
+  const { point: automaticLabelPosition, angle } = measurementPathPosition(points, metrics.labelOffset);
+  const computedLabelPosition = manualLabelPosition ?? automaticLabelPosition;
   const labelBox = getLabelBox(label, metrics);
-  const angle = lineAngle(start, end);
   const tickLength = metrics.pointRadius * 2.2;
   const tickDx = Math.sin(angle) * (tickLength / 2);
   const tickDy = -Math.cos(angle) * (tickLength / 2);
@@ -2293,64 +2702,85 @@ function MeasurementLine({
 
   return (
     <g>
-      <line
-        x1={start.x}
-        y1={start.y}
-        x2={end.x}
-        y2={end.y}
+      <polyline
+        points={points.map((point) => `${point.x},${point.y}`).join(" ")}
+        fill="none"
         stroke={color}
         strokeWidth={metrics.lineWidth}
         strokeLinecap="round"
+        strokeLinejoin="round"
         strokeDasharray={dashed ? "8 6" : "0"}
+        pointerEvents="none"
       />
       {endCap === "circle" ? (
         <>
-          <circle cx={start.x} cy={start.y} r={metrics.pointRadius} fill={color} />
-          <circle cx={end.x} cy={end.y} r={metrics.pointRadius} fill={color} />
+          {points.map((point, index) => (
+            <circle key={`${point.x}-${point.y}-${index}`} cx={point.x} cy={point.y} r={metrics.pointRadius} fill={color} pointerEvents="none" />
+          ))}
         </>
       ) : (
         <>
           <line
-            x1={start.x - tickDx}
-            y1={start.y - tickDy}
-            x2={start.x + tickDx}
-            y2={start.y + tickDy}
+            x1={points[0].x - tickDx}
+            y1={points[0].y - tickDy}
+            x2={points[0].x + tickDx}
+            y2={points[0].y + tickDy}
             stroke={color}
             strokeWidth={metrics.lineWidth}
             strokeLinecap="round"
+            pointerEvents="none"
           />
           <line
-            x1={end.x - tickDx}
-            y1={end.y - tickDy}
-            x2={end.x + tickDx}
-            y2={end.y + tickDy}
+            x1={points[points.length - 1].x - tickDx}
+            y1={points[points.length - 1].y - tickDy}
+            x2={points[points.length - 1].x + tickDx}
+            y2={points[points.length - 1].y + tickDy}
             stroke={color}
             strokeWidth={metrics.lineWidth}
             strokeLinecap="round"
+            pointerEvents="none"
           />
         </>
       )}
-      <g transform={`translate(${computedLabelPosition.x} ${computedLabelPosition.y}) rotate(${labelRotation})`}>
-        <rect
-          x={-labelBox.width / 2}
-          y={-labelBox.height / 2}
-          width={labelBox.width}
-          height={labelBox.height}
-          rx={labelBox.radius}
-          fill="rgba(6, 10, 17, 0.84)"
-          stroke="rgba(255, 255, 255, 0.08)"
-        />
-        <text
-          x="0"
-          y={metrics.labelFontSize * 0.33}
-          textAnchor="middle"
-          fill="#f9f6ef"
-          fontSize={metrics.labelFontSize}
-          fontWeight="600"
+      {showLabel ? (
+        <g
+          className={onLabelPointerDown ? styles.measurementLabelDraggable : undefined}
+          transform={`translate(${computedLabelPosition.x} ${computedLabelPosition.y}) rotate(${labelRotation})`}
+          onPointerDown={onLabelPointerDown ? (event) => onLabelPointerDown(event, computedLabelPosition) : undefined}
+          onClick={onLabelPointerDown ? (event) => event.stopPropagation() : undefined}
+          pointerEvents={onLabelPointerDown ? "all" : "none"}
         >
-          {label}
-        </text>
-      </g>
+          <rect
+            x={-labelBox.width / 2}
+            y={-labelBox.height / 2}
+            width={labelBox.width}
+            height={labelBox.height}
+            rx={labelBox.radius}
+            fill="rgba(6, 10, 17, 0.84)"
+            stroke={onLabelPointerDown ? "rgba(255, 255, 255, 0.28)" : "rgba(255, 255, 255, 0.08)"}
+            strokeDasharray={onLabelPointerDown ? "4 3" : undefined}
+          />
+          {onLabelPointerDown ? (
+            <>
+              <circle cx={-labelBox.width / 2 + 12} cy="-4" r="1.3" fill="rgba(249, 246, 239, 0.78)" />
+              <circle cx={-labelBox.width / 2 + 12} cy="4" r="1.3" fill="rgba(249, 246, 239, 0.78)" />
+              <circle cx={-labelBox.width / 2 + 18} cy="-4" r="1.3" fill="rgba(249, 246, 239, 0.78)" />
+              <circle cx={-labelBox.width / 2 + 18} cy="4" r="1.3" fill="rgba(249, 246, 239, 0.78)" />
+            </>
+          ) : null}
+          <text
+            x="0"
+            y={metrics.labelFontSize * 0.33}
+            textAnchor="middle"
+            fill="#f9f6ef"
+            fontSize={metrics.labelFontSize}
+            fontWeight="600"
+            pointerEvents="none"
+          >
+            {label}
+          </text>
+        </g>
+      ) : null}
     </g>
   );
 }
@@ -2361,12 +2791,18 @@ function AreaShape({
   color,
   metrics,
   open = false,
+  manualLabelPosition = null,
+  showLabel = true,
+  onLabelPointerDown,
 }: {
   points: Point[];
   label: string;
   color: string;
   metrics: AnnotationMetrics;
   open?: boolean;
+  manualLabelPosition?: Point | null;
+  showLabel?: boolean;
+  onLabelPointerDown?: (event: React.PointerEvent<SVGGElement>, labelPoint: Point) => void;
 }) {
   if (points.length === 0) {
     return null;
@@ -2376,7 +2812,7 @@ function AreaShape({
     .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
     .join(" ");
   const finalPath = open ? path : `${path} Z`;
-  const labelPosition = polygonCentroid(points);
+  const labelPosition = manualLabelPosition ?? polygonCentroid(points);
   const labelBox = getLabelBox(label, metrics);
 
   return (
@@ -2394,57 +2830,78 @@ function AreaShape({
       {points.map((point, index) => (
         <circle key={`${point.x}-${point.y}-${index}`} cx={point.x} cy={point.y} r={metrics.pointRadius} fill={color} />
       ))}
-      <g transform={`translate(${labelPosition.x} ${labelPosition.y})`}>
-        <rect
-          x={-labelBox.width / 2}
-          y={-labelBox.height / 2}
-          width={labelBox.width}
-          height={labelBox.height}
-          rx={labelBox.radius}
-          fill="rgba(6, 10, 17, 0.84)"
-          stroke="rgba(255, 255, 255, 0.08)"
-        />
-        <text
-          x="0"
-          y={metrics.labelFontSize * 0.33}
-          textAnchor="middle"
-          fill="#f9f6ef"
-          fontSize={metrics.labelFontSize}
-          fontWeight="600"
+      {showLabel ? (
+        <g
+          className={onLabelPointerDown ? styles.measurementLabelDraggable : undefined}
+          transform={`translate(${labelPosition.x} ${labelPosition.y})`}
+          onPointerDown={onLabelPointerDown ? (event) => onLabelPointerDown(event, labelPosition) : undefined}
+          onClick={onLabelPointerDown ? (event) => event.stopPropagation() : undefined}
+          pointerEvents={onLabelPointerDown ? "all" : "none"}
         >
-          {label}
-        </text>
-      </g>
+          <rect
+            x={-labelBox.width / 2}
+            y={-labelBox.height / 2}
+            width={labelBox.width}
+            height={labelBox.height}
+            rx={labelBox.radius}
+            fill="rgba(6, 10, 17, 0.84)"
+            stroke={onLabelPointerDown ? "rgba(255, 255, 255, 0.28)" : "rgba(255, 255, 255, 0.08)"}
+            strokeDasharray={onLabelPointerDown ? "4 3" : undefined}
+          />
+          {onLabelPointerDown ? (
+            <>
+              <circle cx={-labelBox.width / 2 + 12} cy="-4" r="1.3" fill="rgba(249, 246, 239, 0.78)" />
+              <circle cx={-labelBox.width / 2 + 12} cy="4" r="1.3" fill="rgba(249, 246, 239, 0.78)" />
+              <circle cx={-labelBox.width / 2 + 18} cy="-4" r="1.3" fill="rgba(249, 246, 239, 0.78)" />
+              <circle cx={-labelBox.width / 2 + 18} cy="4" r="1.3" fill="rgba(249, 246, 239, 0.78)" />
+            </>
+          ) : null}
+          <text
+            x="0"
+            y={metrics.labelFontSize * 0.33}
+            textAnchor="middle"
+            fill="#f9f6ef"
+            fontSize={metrics.labelFontSize}
+            fontWeight="600"
+            pointerEvents="none"
+          >
+            {label}
+          </text>
+        </g>
+      ) : null}
     </g>
   );
 }
 
 function drawMeasurement(
   context: CanvasRenderingContext2D,
-  start: Point,
-  end: Point,
+  points: Point[],
   options: {
     label: string;
     color: string;
     dashed?: boolean;
     metrics: AnnotationMetrics;
     scale?: number;
-    labelPosition?: MeasurementLabelPosition;
     labelOrientation?: MeasurementLabelOrientation;
     endCap?: MeasurementEndCap;
+    manualLabelPosition?: Point | null;
+    showLabel?: boolean;
   },
 ) {
+  if (points.length === 0) {
+    return;
+  }
+
   const scale = options.scale ?? 1;
-  const scaledStart = { x: start.x * scale, y: start.y * scale };
-  const scaledEnd = { x: end.x * scale, y: end.y * scale };
-  const labelPosition = lineLabelPosition(
-    scaledStart,
-    scaledEnd,
-    options.metrics.labelOffset,
-    options.labelPosition ?? "center",
-  );
+  const scaledPoints = points.map((point) => ({ x: point.x * scale, y: point.y * scale }));
+  const { point: automaticLabelPosition, angle } = measurementPathPosition(scaledPoints, options.metrics.labelOffset);
+  const labelPosition = options.manualLabelPosition
+    ? {
+        x: options.manualLabelPosition.x * scale,
+        y: options.manualLabelPosition.y * scale,
+      }
+    : automaticLabelPosition;
   const labelBox = getLabelBox(options.label, options.metrics);
-  const angle = lineAngle(scaledStart, scaledEnd);
   const tickLength = options.metrics.pointRadius * 2.2;
   const tickDx = Math.sin(angle) * (tickLength / 2);
   const tickDy = -Math.cos(angle) * (tickLength / 2);
@@ -2455,46 +2912,58 @@ function drawMeasurement(
   context.fillStyle = options.color;
   context.lineWidth = options.metrics.lineWidth;
   context.lineCap = "round";
+  context.lineJoin = "round";
   context.setLineDash(options.dashed ? [12, 8] : []);
   context.beginPath();
-  context.moveTo(scaledStart.x, scaledStart.y);
-  context.lineTo(scaledEnd.x, scaledEnd.y);
+  context.moveTo(scaledPoints[0].x, scaledPoints[0].y);
+  for (let index = 1; index < scaledPoints.length; index += 1) {
+    context.lineTo(scaledPoints[index].x, scaledPoints[index].y);
+  }
   context.stroke();
   context.setLineDash([]);
 
   if ((options.endCap ?? "circle") === "circle") {
-    for (const point of [scaledStart, scaledEnd]) {
+    for (const point of scaledPoints) {
       context.beginPath();
       context.arc(point.x, point.y, options.metrics.pointRadius, 0, Math.PI * 2);
       context.fill();
     }
   } else {
     context.beginPath();
-    context.moveTo(scaledStart.x - tickDx, scaledStart.y - tickDy);
-    context.lineTo(scaledStart.x + tickDx, scaledStart.y + tickDy);
-    context.moveTo(scaledEnd.x - tickDx, scaledEnd.y - tickDy);
-    context.lineTo(scaledEnd.x + tickDx, scaledEnd.y + tickDy);
+    context.moveTo(scaledPoints[0].x - tickDx, scaledPoints[0].y - tickDy);
+    context.lineTo(scaledPoints[0].x + tickDx, scaledPoints[0].y + tickDy);
+    context.moveTo(scaledPoints[scaledPoints.length - 1].x - tickDx, scaledPoints[scaledPoints.length - 1].y - tickDy);
+    context.lineTo(scaledPoints[scaledPoints.length - 1].x + tickDx, scaledPoints[scaledPoints.length - 1].y + tickDy);
     context.stroke();
   }
 
-  context.translate(labelPosition.x, labelPosition.y);
-  context.rotate(labelRotation);
-  context.fillStyle = "rgba(6, 10, 17, 0.84)";
-  roundRect(context, -labelBox.width / 2, -labelBox.height / 2, labelBox.width, labelBox.height, labelBox.radius);
-  context.fill();
+  if (options.showLabel ?? true) {
+    context.translate(labelPosition.x, labelPosition.y);
+    context.rotate(labelRotation);
+    context.fillStyle = "rgba(6, 10, 17, 0.84)";
+    roundRect(context, -labelBox.width / 2, -labelBox.height / 2, labelBox.width, labelBox.height, labelBox.radius);
+    context.fill();
 
-  context.fillStyle = "#f9f6ef";
-  context.font = `600 ${Math.round(options.metrics.labelFontSize)}px sans-serif`;
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(options.label, 0, options.metrics.labelFontSize * 0.04);
+    context.fillStyle = "#f9f6ef";
+    context.font = `600 ${Math.round(options.metrics.labelFontSize)}px sans-serif`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(options.label, 0, options.metrics.labelFontSize * 0.04);
+  }
   context.restore();
 }
 
 function drawArea(
   context: CanvasRenderingContext2D,
   points: Point[],
-  options: { label: string; color: string; metrics: AnnotationMetrics; scale?: number },
+  options: {
+    label: string;
+    color: string;
+    metrics: AnnotationMetrics;
+    scale?: number;
+    manualLabelPosition?: Point | null;
+    showLabel?: boolean;
+  },
 ) {
   if (points.length === 0) {
     return;
@@ -2502,7 +2971,12 @@ function drawArea(
 
   const scale = options.scale ?? 1;
   const scaledPoints = points.map((point) => ({ x: point.x * scale, y: point.y * scale }));
-  const labelPosition = polygonCentroid(scaledPoints);
+  const labelPosition = options.manualLabelPosition
+    ? {
+        x: options.manualLabelPosition.x * scale,
+        y: options.manualLabelPosition.y * scale,
+      }
+    : polygonCentroid(scaledPoints);
   const labelBox = getLabelBox(options.label, options.metrics);
 
   context.save();
@@ -2530,22 +3004,24 @@ function drawArea(
     context.fill();
   }
 
-  context.fillStyle = "rgba(6, 10, 17, 0.84)";
-  roundRect(
-    context,
-    labelPosition.x - labelBox.width / 2,
-    labelPosition.y - labelBox.height / 2,
-    labelBox.width,
-    labelBox.height,
-    labelBox.radius,
-  );
-  context.fill();
+  if (options.showLabel ?? true) {
+    context.fillStyle = "rgba(6, 10, 17, 0.84)";
+    roundRect(
+      context,
+      labelPosition.x - labelBox.width / 2,
+      labelPosition.y - labelBox.height / 2,
+      labelBox.width,
+      labelBox.height,
+      labelBox.radius,
+    );
+    context.fill();
 
-  context.fillStyle = "#f9f6ef";
-  context.font = `600 ${Math.round(options.metrics.labelFontSize)}px sans-serif`;
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.fillText(options.label, labelPosition.x, labelPosition.y + options.metrics.labelFontSize * 0.04);
+    context.fillStyle = "#f9f6ef";
+    context.font = `600 ${Math.round(options.metrics.labelFontSize)}px sans-serif`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(options.label, labelPosition.x, labelPosition.y + options.metrics.labelFontSize * 0.04);
+  }
   context.restore();
 }
 
