@@ -92,6 +92,10 @@ type AreaMeasurement = {
 
 type AreaDisplayUnit = "auto" | "um2" | "mm2" | "cm2" | "m2";
 type CalibrationMethod = "points" | "manual";
+type CollapsibleSection = "tool" | "calibration" | "size" | "output" | "measurements" | "areas";
+type PanelId = CollapsibleSection;
+type PanelColumn = "left" | "right";
+type PanelLayout = Record<PanelColumn, PanelId[]>;
 
 type Viewport = {
   width: number;
@@ -170,6 +174,31 @@ const MEASUREMENT_END_CAP_OPTIONS: Array<{ value: MeasurementEndCap; label: stri
   { value: "circle", label: "Circulo" },
   { value: "tick", label: "Linea" },
 ];
+const PANEL_LAYOUT_KEY = "medidas.panel-layout";
+const DEFAULT_PANEL_LAYOUT: PanelLayout = {
+  left: ["tool", "calibration"],
+  right: ["size", "output", "measurements", "areas"],
+};
+const ALL_PANEL_IDS: PanelId[] = ["tool", "calibration", "size", "output", "measurements", "areas"];
+
+function isPanelLayout(value: unknown): value is PanelLayout {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const maybeLayout = value as Partial<PanelLayout>;
+
+  if (!Array.isArray(maybeLayout.left) || !Array.isArray(maybeLayout.right)) {
+    return false;
+  }
+
+  const combined = [...maybeLayout.left, ...maybeLayout.right];
+  return (
+    combined.length === ALL_PANEL_IDS.length &&
+    ALL_PANEL_IDS.every((panelId) => combined.includes(panelId)) &&
+    new Set(combined).size === ALL_PANEL_IDS.length
+  );
+}
 
 function ZoomIcon({ type }: { type: "in" | "out" }) {
   return (
@@ -282,6 +311,14 @@ function ActionIcon({
           <path d="M6 10.5a5 5 0 1 0 1.4-4" />
         </>
       ) : null}
+    </svg>
+  );
+}
+
+function CollapseIcon({ collapsed }: { collapsed: boolean }) {
+  return (
+    <svg className={styles.collapseIcon} viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <path d={collapsed ? "M7 5.5 12 10l-5 4.5" : "M5.5 7 10 12l4.5-5"} />
     </svg>
   );
 }
@@ -620,6 +657,16 @@ export default function Home() {
   const [isOffline, setIsOffline] = useState(() => (typeof navigator === "undefined" ? false : !navigator.onLine));
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(false);
+  const [panelLayout, setPanelLayout] = useState<PanelLayout>(DEFAULT_PANEL_LAYOUT);
+  const [draggedPanel, setDraggedPanel] = useState<PanelId | null>(null);
+  const [collapsedSections, setCollapsedSections] = useState<Record<CollapsibleSection, boolean>>({
+    tool: false,
+    calibration: false,
+    size: false,
+    output: false,
+    measurements: false,
+    areas: false,
+  });
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -636,6 +683,14 @@ export default function Home() {
         setLastCalibration(storedLast ? (JSON.parse(storedLast) as SavedCalibrationPreset) : null);
       } catch {
         setLastCalibration(null);
+      }
+
+      try {
+        const storedPanelLayout = window.localStorage.getItem(PANEL_LAYOUT_KEY);
+        const parsedPanelLayout = storedPanelLayout ? JSON.parse(storedPanelLayout) : null;
+        setPanelLayout(isPanelLayout(parsedPanelLayout) ? parsedPanelLayout : DEFAULT_PANEL_LAYOUT);
+      } catch {
+        setPanelLayout(DEFAULT_PANEL_LAYOUT);
       }
 
       setStorageReady(true);
@@ -853,6 +908,14 @@ export default function Home() {
 
     window.localStorage.setItem(LAST_CALIBRATION_KEY, JSON.stringify(lastCalibration));
   }, [lastCalibration, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady) {
+      return;
+    }
+
+    window.localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
+  }, [panelLayout, storageReady]);
 
   const fitScale =
     imageAsset && viewport.width > 0 && viewport.height > 0
@@ -1207,6 +1270,94 @@ export default function Home() {
     setPan({ x: 0, y: 0 });
   }
 
+  function toggleSection(section: CollapsibleSection) {
+    setCollapsedSections((current) => ({
+      ...current,
+      [section]: !current[section],
+    }));
+  }
+
+  function findPanelLocation(layout: PanelLayout, panelId: PanelId) {
+    for (const column of ["left", "right"] as PanelColumn[]) {
+      const index = layout[column].indexOf(panelId);
+      if (index !== -1) {
+        return { column, index };
+      }
+    }
+
+    return null;
+  }
+
+  function movePanel(panelId: PanelId, targetColumn: PanelColumn, targetIndex: number) {
+    setPanelLayout((current) => {
+      const source = findPanelLocation(current, panelId);
+
+      if (!source) {
+        return current;
+      }
+
+      const nextLayout: PanelLayout = {
+        left: [...current.left],
+        right: [...current.right],
+      };
+
+      nextLayout[source.column].splice(source.index, 1);
+
+      const boundedTargetIndex = Math.max(0, Math.min(targetIndex, nextLayout[targetColumn].length));
+      nextLayout[targetColumn].splice(boundedTargetIndex, 0, panelId);
+
+      const nextSource = findPanelLocation(nextLayout, panelId);
+      if (nextSource?.column === source.column && nextSource.index === source.index) {
+        return current;
+      }
+
+      return nextLayout;
+    });
+  }
+
+  function handlePanelDragStart(event: React.DragEvent<HTMLDivElement>, panelId: PanelId) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", panelId);
+    setDraggedPanel(panelId);
+  }
+
+  function handlePanelDragEnd() {
+    setDraggedPanel(null);
+  }
+
+  function handlePanelDrop(
+    event: React.DragEvent<HTMLDivElement>,
+    targetColumn: PanelColumn,
+    targetPanelId: PanelId,
+  ) {
+    event.preventDefault();
+
+    if (!draggedPanel) {
+      return;
+    }
+
+    const targetIndex = panelLayout[targetColumn].indexOf(targetPanelId);
+    if (targetIndex === -1) {
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const insertAfter = event.clientY > rect.top + rect.height / 2;
+    movePanel(draggedPanel, targetColumn, targetIndex + (insertAfter ? 1 : 0));
+    setDraggedPanel(null);
+  }
+
+  function handleColumnDrop(event: React.DragEvent<HTMLDivElement>, column: PanelColumn) {
+    event.preventDefault();
+
+    if (!draggedPanel) {
+      return;
+    }
+
+    movePanel(draggedPanel, column, panelLayout[column].length);
+    setDraggedPanel(null);
+  }
+
   function clearDrafts() {
     setCalibrationDraft([]);
     setMeasurementDraft(null);
@@ -1478,6 +1629,402 @@ export default function Home() {
     TOOL_HINTS[toolMode],
   ];
 
+  function renderPanel(panelId: PanelId) {
+    switch (panelId) {
+      case "tool":
+        return (
+          <div className={styles.block}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("tool")} type="button" aria-expanded={!collapsedSections.tool}>
+              <span className={styles.label}>Herramienta</span>
+              <CollapseIcon collapsed={collapsedSections.tool} />
+            </button>
+            {!collapsedSections.tool ? (
+              <>
+                <div className={styles.toolGrid}>
+                  {(["navigate", "calibrate", "measure", "area"] as ToolMode[]).map((mode) => (
+                    <button
+                      key={mode}
+                      className={mode === toolMode ? styles.toolButtonActive : styles.toolButton}
+                      onClick={() => setActiveTool(mode)}
+                      disabled={(mode === "measure" || mode === "area") && !calibration}
+                    >
+                      {TOOL_LABELS[mode]}
+                    </button>
+                  ))}
+                </div>
+                {toolMode === "area" ? (
+                  <div className={styles.toolActions}>
+                    <label className={styles.selectField}>
+                      <span>Mostrar areas en</span>
+                      <select value={areaDisplayUnit} onChange={(event) => setAreaDisplayUnit(event.target.value as AreaDisplayUnit)}>
+                        {AREA_UNIT_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className={styles.metaRow}>
+                      <span>Vertices area</span>
+                      <strong>{areaDraft.length}</strong>
+                    </div>
+                    <div className={styles.metaRow}>
+                      <span>Area actual</span>
+                      <strong>
+                        {draftAreaPixels && draftAreaDisplay ? `${formatNumber(draftAreaDisplay.value)} ${draftAreaDisplay.unitLabel}` : "-"}
+                      </strong>
+                    </div>
+                    <div className={styles.buttonStack}>
+                      <button className={styles.ghostButton} onClick={undoAreaPoint} disabled={areaDraft.length === 0}>
+                        <span className={styles.buttonContent}>
+                          <ActionIcon type="undo" />
+                          <span>Deshacer punto area</span>
+                        </span>
+                      </button>
+                      <button className={styles.secondaryButton} onClick={finishAreaDraft} disabled={areaDraft.length < 3 || !calibration}>
+                        <span className={styles.buttonContent}>
+                          <ActionIcon type="close" />
+                          <span>Cerrar area</span>
+                        </span>
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        );
+      case "calibration":
+        return (
+          <div className={styles.block}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("calibration")} type="button" aria-expanded={!collapsedSections.calibration}>
+              <span className={styles.label}>Calibracion</span>
+              <CollapseIcon collapsed={collapsedSections.calibration} />
+            </button>
+            {!collapsedSections.calibration ? (
+              <>
+                <div className={`${styles.toolGrid} ${styles.calibrationModes}`}>
+                  {(["points", "manual"] as CalibrationMethod[]).map((method) => (
+                    <button
+                      key={method}
+                      className={method === calibrationMethod ? styles.toolButtonActive : styles.toolButton}
+                      onClick={() => {
+                        setCalibrationMethod(method);
+                        setCalibrationDraft([]);
+                      }}
+                    >
+                      {method === "points" ? "Con puntos" : "Manual"}
+                    </button>
+                  ))}
+                </div>
+                {calibrationMethod === "manual" ? (
+                  <>
+                    <div className={styles.manualEquation}>
+                      <label className={styles.selectField}>
+                        <span>Pixeles</span>
+                        <input value={manualPixels} onChange={(event) => setManualPixels(event.target.value)} inputMode="decimal" placeholder="Ej. 250" />
+                      </label>
+                      <div className={styles.equationSign}>=</div>
+                      <label className={styles.selectField}>
+                        <span>Medida real</span>
+                        <input value={knownDistance} onChange={(event) => setKnownDistance(event.target.value)} inputMode="decimal" placeholder="Ej. 100" />
+                      </label>
+                      <label className={styles.selectField}>
+                        <span>Unidad</span>
+                        <input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="um" />
+                      </label>
+                    </div>
+                    <div className={styles.helperText}>Ejemplo: `250 px = 100 um`</div>
+                  </>
+                ) : (
+                  <div className={`${styles.formRow} ${styles.calibrationInputs}`}>
+                    <input value={knownDistance} onChange={(event) => setKnownDistance(event.target.value)} inputMode="decimal" placeholder="Distancia" />
+                    <input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="Unidad" />
+                  </div>
+                )}
+                <div className={styles.metaRow}>
+                  <span>{calibrationMethod === "points" ? "Puntos" : "Modo"}</span>
+                  <strong>{calibrationMethod === "points" ? `${calibrationDraft.length}/2` : "Manual"}</strong>
+                </div>
+                <div className={styles.metaRow}>
+                  <span>Pixels</span>
+                  <strong>
+                    {calibrationMethod === "manual"
+                      ? Number.isFinite(Number(manualPixels)) && Number(manualPixels) > 0
+                        ? formatPixels(Number(manualPixels))
+                        : "-"
+                      : draftCalibrationPixels
+                        ? formatPixels(draftCalibrationPixels)
+                        : "-"}
+                  </strong>
+                </div>
+                {calibration ? (
+                  <div className={styles.metaRow}>
+                    <span>Actual</span>
+                    <strong>
+                      {formatNumber(calibration.knownDistance)} {calibration.unit}
+                    </strong>
+                  </div>
+                ) : null}
+                <div className={styles.buttonStack}>
+                  <button
+                    className={styles.secondaryButton}
+                    onClick={applyCalibration}
+                    disabled={
+                      calibrationMethod === "manual"
+                        ? !Number.isFinite(Number(manualPixels)) || Number(manualPixels) <= 0
+                        : calibrationDraft.length !== 2
+                    }
+                  >
+                    <span className={styles.buttonContent}>
+                      <ActionIcon type="apply" />
+                      <span>Aplicar escala</span>
+                    </span>
+                  </button>
+                  <div className={styles.presetSaveRow}>
+                    <label className={styles.presetNameField}>
+                      <span>Nombre de calibracion</span>
+                      <input value={presetName} onChange={(event) => setPresetName(event.target.value)} placeholder="Ej. Regla 10 mm" disabled={!calibration} />
+                    </label>
+                    <button className={styles.ghostButton} onClick={saveCurrentCalibration} disabled={!calibration}>
+                      <span className={styles.buttonContent}>
+                        <ActionIcon type="save" />
+                        <span>Guardar</span>
+                      </span>
+                    </button>
+                  </div>
+                  <button className={styles.ghostButton} onClick={() => lastCalibration && applySavedCalibration(lastCalibration)} disabled={!lastCalibration}>
+                    <span className={styles.buttonContent}>
+                      <ActionIcon type="restore" />
+                      <span>Recuperar ultima</span>
+                    </span>
+                  </button>
+                  <button className={styles.ghostButton} onClick={clearDrafts}>
+                    <span className={styles.buttonContent}>
+                      <ActionIcon type="clear" />
+                      <span>Limpiar puntos</span>
+                    </span>
+                  </button>
+                </div>
+                {savedCalibrations.length ? (
+                  <div className={styles.presetList}>
+                    {savedCalibrations.map((preset) => (
+                      <div key={preset.id} className={styles.presetItem}>
+                        <div className={styles.presetContent}>
+                          <strong>{preset.name}</strong>
+                          <span>
+                            {formatNumber(preset.knownDistance)} {preset.unit} · {formatPixels(preset.pixelsPerUnit)}
+                          </span>
+                          {preset.imageName ? <em>{preset.imageName}</em> : null}
+                        </div>
+                        <div className={styles.presetActions}>
+                          <button className={styles.ghostButton} onClick={() => applySavedCalibration(preset)}>
+                            Usar
+                          </button>
+                          <button className={styles.presetDeleteButton} onClick={() => removeSavedCalibration(preset.id)}>
+                            Quitar
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        );
+      case "size":
+        return (
+          <div className={styles.block}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("size")} type="button" aria-expanded={!collapsedSections.size}>
+              <span className={styles.label}>Tamano</span>
+              <CollapseIcon collapsed={collapsedSections.size} />
+            </button>
+            {!collapsedSections.size ? (
+              <div className={styles.sliderGroup}>
+                <label className={styles.sliderField}>
+                  <span>Etiquetas</span>
+                  <input type="range" min="0.2" max="4" step="0.1" value={labelSize} onChange={(event) => setLabelSize(Number(event.target.value))} />
+                  <strong>{labelSize.toFixed(1)}x</strong>
+                </label>
+                <label className={styles.sliderField}>
+                  <span>Lineas</span>
+                  <input type="range" min="0.2" max="4" step="0.1" value={lineSize} onChange={(event) => setLineSize(Number(event.target.value))} />
+                  <strong>{lineSize.toFixed(1)}x</strong>
+                </label>
+                <label className={styles.sliderField}>
+                  <span>Escala</span>
+                  <input type="range" min="0.2" max="4" step="0.1" value={scaleSize} onChange={(event) => setScaleSize(Number(event.target.value))} />
+                  <strong>{scaleSize.toFixed(1)}x</strong>
+                </label>
+              </div>
+            ) : null}
+          </div>
+        );
+      case "output":
+        return (
+          <div className={styles.block}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("output")} type="button" aria-expanded={!collapsedSections.output}>
+              <span className={styles.label}>Salida</span>
+              <CollapseIcon collapsed={collapsedSections.output} />
+            </button>
+            {!collapsedSections.output ? (
+              <div className={styles.buttonStack}>
+                <button className={styles.secondaryButton} onClick={() => exportAnnotatedImage("png")} disabled={!imageAsset}>
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="png" />
+                    <span>Exportar PNG</span>
+                  </span>
+                </button>
+                <button className={styles.secondaryButton} onClick={() => exportAnnotatedImage("jpeg")} disabled={!imageAsset}>
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="jpg" />
+                    <span>Exportar JPG</span>
+                  </span>
+                </button>
+                <button className={styles.ghostButton} onClick={() => setShowScaleBar((current) => !current)} disabled={!calibration}>
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type={showScaleBar ? "hide" : "show"} />
+                    <span>{showScaleBar ? "Ocultar escala" : "Mostrar escala"}</span>
+                  </span>
+                </button>
+                <button className={styles.ghostButton} onClick={resetView} disabled={!imageAsset}>
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="reset" />
+                    <span>Reset vista</span>
+                  </span>
+                </button>
+              </div>
+            ) : null}
+          </div>
+        );
+      case "measurements":
+        return (
+          <div className={styles.block}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("measurements")} type="button" aria-expanded={!collapsedSections.measurements}>
+              <span className={styles.label}>Mediciones</span>
+              <CollapseIcon collapsed={collapsedSections.measurements} />
+            </button>
+            {!collapsedSections.measurements ? (
+              measurements.length ? (
+                <div className={styles.measurementList}>
+                  {measurements.map((measurement) => (
+                    <div key={measurement.id} className={styles.measurementItem}>
+                      <div className={styles.measurementContent}>
+                        <input className={styles.measurementNameInput} value={measurement.name} onChange={(event) => updateMeasurementName(measurement.id, event.target.value)} aria-label="Nombre de medicion" />
+                        <span>
+                          {formatNumber(measurement.value)} {measurement.unit}
+                        </span>
+                        <select
+                          className={styles.measurementSelect}
+                          value={measurement.labelPosition}
+                          onChange={(event) => updateMeasurementLabelPosition(measurement.id, event.target.value as MeasurementLabelPosition)}
+                          aria-label="Posicion de etiqueta"
+                        >
+                          {MEASUREMENT_LABEL_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          className={styles.measurementSelect}
+                          value={measurement.labelOrientation}
+                          onChange={(event) => updateMeasurementLabelOrientation(measurement.id, event.target.value as MeasurementLabelOrientation)}
+                          aria-label="Orientacion de etiqueta"
+                        >
+                          {MEASUREMENT_ORIENTATION_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          className={styles.measurementSelect}
+                          value={measurement.endCap}
+                          onChange={(event) => updateMeasurementEndCap(measurement.id, event.target.value as MeasurementEndCap)}
+                          aria-label="Terminacion de medicion"
+                        >
+                          {MEASUREMENT_END_CAP_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <button onClick={() => removeMeasurement(measurement.id)}>Quitar</button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={styles.emptyState}>Sin mediciones</div>
+              )
+            ) : null}
+          </div>
+        );
+      case "areas":
+        return (
+          <div className={styles.block}>
+            <button className={styles.blockHeader} onClick={() => toggleSection("areas")} type="button" aria-expanded={!collapsedSections.areas}>
+              <span className={styles.label}>Areas</span>
+              <CollapseIcon collapsed={collapsedSections.areas} />
+            </button>
+            {!collapsedSections.areas ? (
+              areas.length ? (
+                <div className={styles.measurementList}>
+                  {displayedAreas.map((area) => (
+                    <div key={area.id} className={styles.measurementItem}>
+                      <div className={styles.measurementContent}>
+                        <input className={styles.measurementNameInput} value={area.name} onChange={(event) => updateAreaName(area.id, event.target.value)} aria-label="Nombre de area" />
+                        <span>
+                          {formatNumber(area.display.value)} {area.display.unitLabel}
+                        </span>
+                      </div>
+                      <button onClick={() => removeArea(area.id)}>Quitar</button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={styles.emptyState}>Sin areas</div>
+              )
+            ) : null}
+          </div>
+        );
+      default:
+        return null;
+    }
+  }
+
+  function renderPanelColumn(column: PanelColumn) {
+    return (
+      <>
+        {panelLayout[column].map((panelId) => (
+          <div
+            key={panelId}
+            className={styles.panelShell}
+            draggable
+            onDragStart={(event) => handlePanelDragStart(event, panelId)}
+            onDragEnd={handlePanelDragEnd}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => handlePanelDrop(event, column, panelId)}
+            data-dragging={draggedPanel === panelId ? "true" : "false"}
+            title="Arrastra para mover este panel"
+          >
+            {renderPanel(panelId)}
+          </div>
+        ))}
+        <div
+          className={styles.sidebarDropZone}
+          onDragOver={(event) => event.preventDefault()}
+          onDrop={(event) => handleColumnDrop(event, column)}
+          data-active={draggedPanel ? "true" : "false"}
+        >
+          {draggedPanel ? "Soltar aqui" : ""}
+        </div>
+      </>
+    );
+  }
+
   return (
     <div className={styles.page}>
       <input
@@ -1499,218 +2046,7 @@ export default function Home() {
                 </span>
               </button>
             </div>
-
-            <div className={styles.block}>
-              <div className={styles.label}>Herramienta</div>
-              <div className={styles.toolGrid}>
-                {(["navigate", "calibrate", "measure", "area"] as ToolMode[]).map((mode) => (
-                  <button
-                    key={mode}
-                    className={mode === toolMode ? styles.toolButtonActive : styles.toolButton}
-                    onClick={() => setActiveTool(mode)}
-                    disabled={(mode === "measure" || mode === "area") && !calibration}
-                  >
-                    {TOOL_LABELS[mode]}
-                  </button>
-                ))}
-              </div>
-              {toolMode === "area" ? (
-                <div className={styles.toolActions}>
-                  <label className={styles.selectField}>
-                    <span>Mostrar areas en</span>
-                    <select value={areaDisplayUnit} onChange={(event) => setAreaDisplayUnit(event.target.value as AreaDisplayUnit)}>
-                      {AREA_UNIT_OPTIONS.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <div className={styles.metaRow}>
-                    <span>Vertices area</span>
-                    <strong>{areaDraft.length}</strong>
-                  </div>
-                  <div className={styles.metaRow}>
-                    <span>Area actual</span>
-                    <strong>
-                      {draftAreaPixels && draftAreaDisplay ? `${formatNumber(draftAreaDisplay.value)} ${draftAreaDisplay.unitLabel}` : "-"}
-                    </strong>
-                  </div>
-                  <div className={styles.buttonStack}>
-                    <button className={styles.ghostButton} onClick={undoAreaPoint} disabled={areaDraft.length === 0}>
-                      <span className={styles.buttonContent}>
-                        <ActionIcon type="undo" />
-                        <span>Deshacer punto area</span>
-                      </span>
-                    </button>
-                    <button
-                      className={styles.secondaryButton}
-                      onClick={finishAreaDraft}
-                      disabled={areaDraft.length < 3 || !calibration}
-                    >
-                      <span className={styles.buttonContent}>
-                        <ActionIcon type="close" />
-                        <span>Cerrar area</span>
-                      </span>
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-            </div>
-
-            <div className={styles.block}>
-              <div className={styles.label}>Calibracion</div>
-              <div className={`${styles.toolGrid} ${styles.calibrationModes}`}>
-                {(["points", "manual"] as CalibrationMethod[]).map((method) => (
-                  <button
-                    key={method}
-                    className={method === calibrationMethod ? styles.toolButtonActive : styles.toolButton}
-                    onClick={() => {
-                      setCalibrationMethod(method);
-                      setCalibrationDraft([]);
-                    }}
-                  >
-                    {method === "points" ? "Con puntos" : "Manual"}
-                  </button>
-                ))}
-              </div>
-              {calibrationMethod === "manual" ? (
-                <>
-                  <div className={styles.manualEquation}>
-                    <label className={styles.selectField}>
-                      <span>Pixeles</span>
-                      <input
-                        value={manualPixels}
-                        onChange={(event) => setManualPixels(event.target.value)}
-                        inputMode="decimal"
-                        placeholder="Ej. 250"
-                      />
-                    </label>
-                    <div className={styles.equationSign}>=</div>
-                    <label className={styles.selectField}>
-                      <span>Medida real</span>
-                      <input
-                        value={knownDistance}
-                        onChange={(event) => setKnownDistance(event.target.value)}
-                        inputMode="decimal"
-                        placeholder="Ej. 100"
-                      />
-                    </label>
-                    <label className={styles.selectField}>
-                      <span>Unidad</span>
-                      <input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="um" />
-                    </label>
-                  </div>
-                  <div className={styles.helperText}>Ejemplo: `250 px = 100 um`</div>
-                </>
-              ) : (
-                <div className={`${styles.formRow} ${styles.calibrationInputs}`}>
-                  <input
-                    value={knownDistance}
-                    onChange={(event) => setKnownDistance(event.target.value)}
-                    inputMode="decimal"
-                    placeholder="Distancia"
-                  />
-                  <input value={unit} onChange={(event) => setUnit(event.target.value)} placeholder="Unidad" />
-                </div>
-              )}
-              <div className={styles.metaRow}>
-                <span>{calibrationMethod === "points" ? "Puntos" : "Modo"}</span>
-                <strong>{calibrationMethod === "points" ? `${calibrationDraft.length}/2` : "Manual"}</strong>
-              </div>
-              <div className={styles.metaRow}>
-                <span>Pixels</span>
-                <strong>
-                  {calibrationMethod === "manual"
-                    ? Number.isFinite(Number(manualPixels)) && Number(manualPixels) > 0
-                      ? formatPixels(Number(manualPixels))
-                      : "-"
-                    : draftCalibrationPixels
-                      ? formatPixels(draftCalibrationPixels)
-                      : "-"}
-                </strong>
-              </div>
-              {calibration ? (
-                <div className={styles.metaRow}>
-                  <span>Actual</span>
-                  <strong>
-                    {formatNumber(calibration.knownDistance)} {calibration.unit}
-                  </strong>
-                </div>
-              ) : null}
-              <div className={styles.buttonStack}>
-                <button
-                  className={styles.secondaryButton}
-                  onClick={applyCalibration}
-                  disabled={
-                    calibrationMethod === "manual"
-                      ? !Number.isFinite(Number(manualPixels)) || Number(manualPixels) <= 0
-                      : calibrationDraft.length !== 2
-                  }
-                >
-                  <span className={styles.buttonContent}>
-                    <ActionIcon type="apply" />
-                    <span>Aplicar escala</span>
-                  </span>
-                </button>
-                <div className={styles.presetSaveRow}>
-                  <label className={styles.presetNameField}>
-                    <span>Nombre de calibracion</span>
-                    <input
-                      value={presetName}
-                      onChange={(event) => setPresetName(event.target.value)}
-                      placeholder="Ej. Regla 10 mm"
-                      disabled={!calibration}
-                    />
-                  </label>
-                  <button className={styles.ghostButton} onClick={saveCurrentCalibration} disabled={!calibration}>
-                    <span className={styles.buttonContent}>
-                      <ActionIcon type="save" />
-                      <span>Guardar</span>
-                    </span>
-                  </button>
-                </div>
-                <button
-                  className={styles.ghostButton}
-                  onClick={() => lastCalibration && applySavedCalibration(lastCalibration)}
-                  disabled={!lastCalibration}
-                >
-                  <span className={styles.buttonContent}>
-                    <ActionIcon type="restore" />
-                    <span>Recuperar ultima</span>
-                  </span>
-                </button>
-                <button className={styles.ghostButton} onClick={clearDrafts}>
-                  <span className={styles.buttonContent}>
-                    <ActionIcon type="clear" />
-                    <span>Limpiar puntos</span>
-                  </span>
-                </button>
-              </div>
-              {savedCalibrations.length ? (
-                <div className={styles.presetList}>
-                  {savedCalibrations.map((preset) => (
-                    <div key={preset.id} className={styles.presetItem}>
-                      <div className={styles.presetContent}>
-                        <strong>{preset.name}</strong>
-                        <span>
-                          {formatNumber(preset.knownDistance)} {preset.unit} · {formatPixels(preset.pixelsPerUnit)}
-                        </span>
-                        {preset.imageName ? <em>{preset.imageName}</em> : null}
-                      </div>
-                      <div className={styles.presetActions}>
-                        <button className={styles.ghostButton} onClick={() => applySavedCalibration(preset)}>
-                          Usar
-                        </button>
-                        <button className={styles.presetDeleteButton} onClick={() => removeSavedCalibration(preset.id)}>
-                          Quitar
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            {renderPanelColumn("left")}
 
           </aside>
 
@@ -1902,191 +2238,7 @@ export default function Home() {
             </div>
           </section>
 
-          <aside className={styles.sidebar}>
-            <div className={styles.block}>
-              <div className={styles.label}>Tamano</div>
-              <div className={styles.sliderGroup}>
-                <label className={styles.sliderField}>
-                  <span>Etiquetas</span>
-                  <input
-                    type="range"
-                    min="0.2"
-                    max="4"
-                    step="0.1"
-                    value={labelSize}
-                    onChange={(event) => setLabelSize(Number(event.target.value))}
-                  />
-                  <strong>{labelSize.toFixed(1)}x</strong>
-                </label>
-                <label className={styles.sliderField}>
-                  <span>Lineas</span>
-                  <input
-                    type="range"
-                    min="0.2"
-                    max="4"
-                    step="0.1"
-                    value={lineSize}
-                    onChange={(event) => setLineSize(Number(event.target.value))}
-                  />
-                  <strong>{lineSize.toFixed(1)}x</strong>
-                </label>
-                <label className={styles.sliderField}>
-                  <span>Escala</span>
-                  <input
-                    type="range"
-                    min="0.2"
-                    max="4"
-                    step="0.1"
-                    value={scaleSize}
-                    onChange={(event) => setScaleSize(Number(event.target.value))}
-                  />
-                  <strong>{scaleSize.toFixed(1)}x</strong>
-                </label>
-              </div>
-            </div>
-
-            <div className={styles.block}>
-              <div className={styles.label}>Salida</div>
-              <div className={styles.buttonStack}>
-                <button
-                  className={styles.secondaryButton}
-                  onClick={() => exportAnnotatedImage("png")}
-                  disabled={!imageAsset}
-                >
-                  <span className={styles.buttonContent}>
-                    <ActionIcon type="png" />
-                    <span>Exportar PNG</span>
-                  </span>
-                </button>
-                <button
-                  className={styles.secondaryButton}
-                  onClick={() => exportAnnotatedImage("jpeg")}
-                  disabled={!imageAsset}
-                >
-                  <span className={styles.buttonContent}>
-                    <ActionIcon type="jpg" />
-                    <span>Exportar JPG</span>
-                  </span>
-                </button>
-                <button
-                  className={styles.ghostButton}
-                  onClick={() => setShowScaleBar((current) => !current)}
-                  disabled={!calibration}
-                >
-                  <span className={styles.buttonContent}>
-                    <ActionIcon type={showScaleBar ? "hide" : "show"} />
-                    <span>{showScaleBar ? "Ocultar escala" : "Mostrar escala"}</span>
-                  </span>
-                </button>
-                <button className={styles.ghostButton} onClick={resetView} disabled={!imageAsset}>
-                  <span className={styles.buttonContent}>
-                    <ActionIcon type="reset" />
-                    <span>Reset vista</span>
-                  </span>
-                </button>
-              </div>
-            </div>
-
-            <div className={styles.block}>
-              <div className={styles.label}>Mediciones</div>
-              {measurements.length ? (
-                <div className={styles.measurementList}>
-                  {measurements.map((measurement) => (
-                    <div key={measurement.id} className={styles.measurementItem}>
-                      <div className={styles.measurementContent}>
-                        <input
-                          className={styles.measurementNameInput}
-                          value={measurement.name}
-                          onChange={(event) => updateMeasurementName(measurement.id, event.target.value)}
-                          aria-label="Nombre de medicion"
-                        />
-                        <span>
-                          {formatNumber(measurement.value)} {measurement.unit}
-                        </span>
-                        <select
-                          className={styles.measurementSelect}
-                          value={measurement.labelPosition}
-                          onChange={(event) =>
-                            updateMeasurementLabelPosition(
-                              measurement.id,
-                              event.target.value as MeasurementLabelPosition,
-                            )
-                          }
-                          aria-label="Posicion de etiqueta"
-                        >
-                          {MEASUREMENT_LABEL_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          className={styles.measurementSelect}
-                          value={measurement.labelOrientation}
-                          onChange={(event) =>
-                            updateMeasurementLabelOrientation(
-                              measurement.id,
-                              event.target.value as MeasurementLabelOrientation,
-                            )
-                          }
-                          aria-label="Orientacion de etiqueta"
-                        >
-                          {MEASUREMENT_ORIENTATION_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        <select
-                          className={styles.measurementSelect}
-                          value={measurement.endCap}
-                          onChange={(event) =>
-                            updateMeasurementEndCap(measurement.id, event.target.value as MeasurementEndCap)
-                          }
-                          aria-label="Terminacion de medicion"
-                        >
-                          {MEASUREMENT_END_CAP_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <button onClick={() => removeMeasurement(measurement.id)}>Quitar</button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className={styles.emptyState}>Sin mediciones</div>
-              )}
-            </div>
-
-            <div className={styles.block}>
-              <div className={styles.label}>Areas</div>
-              {areas.length ? (
-                <div className={styles.measurementList}>
-                  {displayedAreas.map((area) => (
-                    <div key={area.id} className={styles.measurementItem}>
-                      <div className={styles.measurementContent}>
-                        <input
-                          className={styles.measurementNameInput}
-                          value={area.name}
-                          onChange={(event) => updateAreaName(area.id, event.target.value)}
-                          aria-label="Nombre de area"
-                        />
-                        <span>
-                          {formatNumber(area.display.value)} {area.display.unitLabel}
-                        </span>
-                      </div>
-                      <button onClick={() => removeArea(area.id)}>Quitar</button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className={styles.emptyState}>Sin areas</div>
-              )}
-            </div>
-          </aside>
+          <aside className={styles.sidebar}>{renderPanelColumn("right")}</aside>
         </section>
       </main>
     </div>

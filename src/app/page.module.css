@@ -76,6 +76,34 @@
   width: 100%;
 }
 
+.panelShell {
+  transition:
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.panelShell[data-dragging="true"] {
+  opacity: 0.45;
+}
+
+.sidebarDropZone {
+  min-height: 18px;
+  border: 1px dashed transparent;
+  border-radius: 14px;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.sidebarDropZone[data-active="true"] {
+  padding: 10px 8px;
+  border-color: rgba(36, 55, 123, 0.18);
+  background: rgba(214, 222, 255, 0.36);
+}
+
 .block,
 .viewerTopbar,
 .viewer,
@@ -93,6 +121,19 @@
   padding: 14px;
 }
 
+.blockHeader {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
 .label {
   margin-bottom: 10px;
   font-size: 0.72rem;
@@ -100,6 +141,21 @@
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--text-muted);
+}
+
+.blockHeader .label {
+  margin-bottom: 0;
+}
+
+.collapseIcon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  stroke: var(--text-muted);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
 }
 
 .primaryButton,
