@@ -1,5 +1,15 @@
-const CACHE_NAME = "escala-medicion-v1";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/icon.png", "/apple-icon.png", "/favicon.ico"];
+const CACHE_NAME = "escala-medicion-v2";
+const APP_SHELL = [
+  "/",
+  "/manifest.webmanifest",
+  "/icon-144.png",
+  "/icon-192.png",
+  "/icon.png",
+  "/apple-icon.png",
+  "/favicon.ico",
+  "/pwa-screenshot-wide.png",
+  "/pwa-screenshot-mobile.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -45,10 +55,14 @@ self.addEventListener("fetch", (event) => {
   const isStaticAsset =
     isSameOrigin &&
     (url.pathname.startsWith("/_next/static/") ||
+      url.pathname === "/icon-144.png" ||
+      url.pathname === "/icon-192.png" ||
       url.pathname === "/icon.png" ||
       url.pathname === "/apple-icon.png" ||
       url.pathname === "/favicon.ico" ||
-      url.pathname === "/manifest.webmanifest");
+      url.pathname === "/manifest.webmanifest" ||
+      url.pathname === "/pwa-screenshot-wide.png" ||
+      url.pathname === "/pwa-screenshot-mobile.png");
 
   if (!isStaticAsset) {
     return;
