@@ -1603,7 +1603,7 @@ export default function Home() {
         unit: calibration.unit,
         color: MEASUREMENT_COLORS[current.length % MEASUREMENT_COLORS.length],
         labelOrientation: "horizontal",
-        endCap: "circle",
+        endCap: "tick",
         manualLabelPosition: null,
         showLabel: true,
         collapsed: false,
@@ -2366,7 +2366,12 @@ export default function Home() {
             </button>
             {!collapsedSections.areas ? (
               areas.length ? (
-                <div className={styles.measurementList}>
+                <div
+                  className={`${styles.measurementList} ${styles.measurementListScrollable}`}
+                  role="region"
+                  aria-label="Lista de áreas"
+                  tabIndex={0}
+                >
                   {displayedAreas.map((area) => (
                     <div
                       key={area.id}
