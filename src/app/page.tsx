@@ -2245,7 +2245,12 @@ export default function Home() {
             </button>
             {!collapsedSections.measurements ? (
               measurements.length ? (
-                <div className={styles.measurementList}>
+                <div
+                  className={`${styles.measurementList} ${styles.measurementListScrollable}`}
+                  role="region"
+                  aria-label="Lista de mediciones"
+                  tabIndex={0}
+                >
                   {measurements.map((measurement) => (
                     <div
                       key={measurement.id}

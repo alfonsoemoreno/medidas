@@ -747,6 +747,21 @@
   gap: 8px;
 }
 
+.measurementListScrollable {
+  max-height: min(58dvh, 680px);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 8px 2px 2px;
+  scrollbar-gutter: stable;
+}
+
+.measurementListScrollable:focus-visible {
+  outline: 2px solid rgba(36, 55, 123, 0.52);
+  outline-offset: 3px;
+  border-radius: 18px;
+}
+
 .presetList {
   display: flex;
   flex-direction: column;
@@ -1090,6 +1105,10 @@
       "left"
       "viewer"
       "right";
+  }
+
+  .measurementListScrollable {
+    max-height: min(52dvh, 520px);
   }
 }
 
