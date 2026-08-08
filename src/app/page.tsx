@@ -44,6 +44,46 @@ type ImageAsset = {
   name: string;
 };
 
+type ProjectData = {
+  version: 1;
+  savedAt: number;
+  imageName: string;
+  imageWidth: number;
+  imageHeight: number;
+  toolMode: ToolMode;
+  zoom: number;
+  pan: { x: number; y: number };
+  showScaleBar: boolean;
+  calibrationMethod: CalibrationMethod;
+  knownDistance: string;
+  manualPixels: string;
+  unit: string;
+  calibration: Calibration | null;
+  measurements: Measurement[];
+  areas: AreaMeasurement[];
+  areaDisplayUnit: AreaDisplayUnit;
+  labelSize: number;
+  lineSize: number;
+  scaleSize: number;
+};
+
+type StoredProject = ProjectData & {
+  id: string;
+  projectName: string;
+  image: Blob;
+};
+
+type ExportedProject = ProjectData & {
+  projectName?: string;
+  imageDataUrl: string;
+};
+
+type ProjectSummary = {
+  id: string;
+  projectName: string;
+  savedAt: number;
+};
+
 type Calibration = {
   start?: Point | null;
   end?: Point | null;
@@ -175,6 +215,10 @@ const MEASUREMENT_END_CAP_OPTIONS: Array<{ value: MeasurementEndCap; label: stri
   { value: "tick", label: "Linea" },
 ];
 const PANEL_LAYOUT_KEY = "medidas.panel-layout";
+const PROJECT_DATABASE_NAME = "medidas.projects";
+const PROJECT_STORE_NAME = "projects";
+const CURRENT_PROJECT_ID = "current";
+const CURRENT_PROJECT_KEY = "medidas.current-project-id";
 const DEFAULT_PANEL_LAYOUT: PanelLayout = {
   left: ["tool", "calibration"],
   right: ["size", "output", "measurements", "areas"],
@@ -494,6 +538,122 @@ function applyCalibrationPresetValues(preset: SavedCalibrationPreset): Calibrati
   };
 }
 
+function openProjectDatabase() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = window.indexedDB.open(PROJECT_DATABASE_NAME, 1);
+
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore(PROJECT_STORE_NAME);
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function getLocalProject(id: string) {
+  const database = await openProjectDatabase();
+
+  return new Promise<StoredProject | null>((resolve, reject) => {
+    const request = database.transaction(PROJECT_STORE_NAME, "readonly").objectStore(PROJECT_STORE_NAME).get(id);
+    request.onsuccess = () => {
+      database.close();
+      resolve((request.result as StoredProject | undefined) ?? null);
+    };
+    request.onerror = () => {
+      database.close();
+      reject(request.error);
+    };
+  });
+}
+
+async function saveLocalProject(project: StoredProject) {
+  const database = await openProjectDatabase();
+
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(PROJECT_STORE_NAME, "readwrite");
+    transaction.objectStore(PROJECT_STORE_NAME).put(project, project.id);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      database.close();
+      reject(transaction.error);
+    };
+  });
+}
+
+async function listLocalProjects() {
+  const database = await openProjectDatabase();
+
+  return new Promise<ProjectSummary[]>((resolve, reject) => {
+    const request = database.transaction(PROJECT_STORE_NAME, "readonly").objectStore(PROJECT_STORE_NAME).getAll();
+    request.onsuccess = () => {
+      database.close();
+      const projects = (request.result as Array<Partial<StoredProject>>)
+        .filter((project) => project.image instanceof Blob)
+        .map((project) => ({
+          id: project.id ?? CURRENT_PROJECT_ID,
+          projectName: project.projectName?.trim() || project.imageName || "Proyecto sin nombre",
+          savedAt: project.savedAt ?? 0,
+        }))
+        .sort((first, second) => second.savedAt - first.savedAt);
+      resolve(projects);
+    };
+    request.onerror = () => {
+      database.close();
+      reject(request.error);
+    };
+  });
+}
+
+async function deleteLocalProject(id: string) {
+  const database = await openProjectDatabase();
+
+  return new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(PROJECT_STORE_NAME, "readwrite");
+    transaction.objectStore(PROJECT_STORE_NAME).delete(id);
+    transaction.oncomplete = () => {
+      database.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      database.close();
+      reject(transaction.error);
+    };
+  });
+}
+
+function readBlobAsDataUrl(blob: Blob) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+function dataUrlToBlob(dataUrl: string) {
+  const [metadata, encodedData] = dataUrl.split(",", 2);
+  const contentType = metadata?.match(/data:(.*?);base64/)?.[1];
+
+  if (!contentType || !encodedData) {
+    throw new Error("El archivo no contiene una imagen válida.");
+  }
+
+  const bytes = Uint8Array.from(atob(encodedData), (character) => character.charCodeAt(0));
+  return new Blob([bytes], { type: contentType });
+}
+
+function isProjectData(value: unknown): value is ExportedProject {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const project = value as Partial<ExportedProject>;
+  return project.version === 1 && typeof project.imageDataUrl === "string" && Array.isArray(project.measurements) && Array.isArray(project.areas);
+}
+
 function createAnnotationMetrics(
   imageAsset: ImageAsset | null,
   multiplier: { labels: number; lines: number; scale: number },
@@ -698,8 +858,10 @@ function measurementPathPosition(
 
 export default function Home() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const projectInputRef = useRef<HTMLInputElement | null>(null);
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  const projectReadyRef = useRef(false);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
   const gestureZoomRef = useRef<{ active: boolean; baseZoom: number } | null>(null);
@@ -711,6 +873,10 @@ export default function Home() {
 
   const [viewport, setViewport] = useState<Viewport>({ width: 0, height: 0 });
   const [imageAsset, setImageAsset] = useState<ImageAsset | null>(null);
+  const [imageBlob, setImageBlob] = useState<Blob | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState("");
+  const [localProjects, setLocalProjects] = useState<ProjectSummary[]>([]);
   const [toolMode, setToolMode] = useState<ToolMode>("navigate");
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -726,6 +892,7 @@ export default function Home() {
   const [savedCalibrations, setSavedCalibrations] = useState<SavedCalibrationPreset[]>([]);
   const [lastCalibration, setLastCalibration] = useState<SavedCalibrationPreset | null>(null);
   const [storageReady, setStorageReady] = useState(false);
+  const [projectStatus, setProjectStatus] = useState("Preparando guardado local");
   const [presetName, setPresetName] = useState("");
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
   const [areas, setAreas] = useState<AreaMeasurement[]>([]);
@@ -1060,6 +1227,89 @@ export default function Home() {
     window.localStorage.setItem(PANEL_LAYOUT_KEY, JSON.stringify(panelLayout));
   }, [panelLayout, storageReady]);
 
+  useEffect(() => {
+    if (!storageReady) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const selectedProjectId = window.localStorage.getItem(CURRENT_PROJECT_KEY) || CURRENT_PROJECT_ID;
+
+    void Promise.all([getLocalProject(selectedProjectId), listLocalProjects()])
+      .then(([project, projects]) => {
+        if (cancelled) {
+          return;
+        }
+
+        setLocalProjects(projects);
+
+        if (project?.image instanceof Blob) {
+          hydrateProject(project, project.image);
+          setProjectId(project.id ?? selectedProjectId);
+          setProjectName(project.projectName?.trim() || project.imageName);
+          setProjectStatus("Proyecto local restaurado");
+        } else {
+          setProjectStatus("Sin proyecto guardado");
+          projectReadyRef.current = true;
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setProjectStatus("Guardado local no disponible");
+          projectReadyRef.current = true;
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  // The initial restore must run once after preferences are available.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageReady]);
+
+  useEffect(() => {
+    if (!storageReady || !projectReadyRef.current || !imageAsset || !imageBlob || !projectId) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setProjectStatus("Guardando localmente…");
+      void saveLocalProject({ ...createProjectData(), id: projectId, projectName: projectName.trim() || imageAsset.name, image: imageBlob })
+        .then(() => {
+          setProjectStatus("Guardado local automático");
+          return listLocalProjects();
+        })
+        .then(setLocalProjects)
+        .catch(() => setProjectStatus("No se pudo guardar localmente"));
+    }, 650);
+
+    return () => window.clearTimeout(timeoutId);
+  // The listed state fields are the autosave payload dependencies.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    areaDisplayUnit,
+    areas,
+    calibration,
+    calibrationMethod,
+    imageAsset,
+    imageBlob,
+    knownDistance,
+    labelSize,
+    lineSize,
+    manualPixels,
+    measurements,
+    pan,
+    projectId,
+    projectName,
+    scaleSize,
+    showScaleBar,
+    storageReady,
+    toolMode,
+    unit,
+    zoom,
+  ]);
+
   const fitScale =
     imageAsset && viewport.width > 0 && viewport.height > 0
       ? Math.min(viewport.width / imageAsset.width, viewport.height / imageAsset.height)
@@ -1069,6 +1319,181 @@ export default function Home() {
   const renderedHeight = imageAsset ? imageAsset.height * fitScale * zoom : 0;
   const stageX = (viewport.width - renderedWidth) / 2 + pan.x;
   const stageY = (viewport.height - renderedHeight) / 2 + pan.y;
+
+  function createProjectData(): ProjectData {
+    if (!imageAsset) {
+      throw new Error("No hay una imagen para guardar.");
+    }
+
+    return {
+      version: 1,
+      savedAt: Date.now(),
+      imageName: imageAsset.name,
+      imageWidth: imageAsset.width,
+      imageHeight: imageAsset.height,
+      toolMode,
+      zoom,
+      pan,
+      showScaleBar,
+      calibrationMethod,
+      knownDistance,
+      manualPixels,
+      unit,
+      calibration,
+      measurements,
+      areas,
+      areaDisplayUnit,
+      labelSize,
+      lineSize,
+      scaleSize,
+    };
+  }
+
+  function hydrateProject(project: ProjectData, image: Blob) {
+    projectReadyRef.current = false;
+
+    if (objectUrlRef.current) {
+      URL.revokeObjectURL(objectUrlRef.current);
+    }
+
+    const imageUrl = URL.createObjectURL(image);
+    objectUrlRef.current = imageUrl;
+    setImageBlob(image);
+    setImageAsset({
+      src: imageUrl,
+      name: project.imageName,
+      width: project.imageWidth,
+      height: project.imageHeight,
+    });
+    setToolMode(project.toolMode);
+    setZoom(project.zoom);
+    setPan(project.pan);
+    setShowScaleBar(project.showScaleBar);
+    setCalibrationMethod(project.calibrationMethod);
+    setKnownDistance(project.knownDistance);
+    setManualPixels(project.manualPixels);
+    setUnit(project.unit);
+    setCalibration(project.calibration);
+    setMeasurements(project.measurements);
+    setAreas(project.areas);
+    setAreaDisplayUnit(project.areaDisplayUnit);
+    setLabelSize(project.labelSize);
+    setLineSize(project.lineSize);
+    setScaleSize(project.scaleSize);
+    clearDrafts();
+    projectReadyRef.current = true;
+  }
+
+  function openProjectPicker() {
+    projectInputRef.current?.click();
+  }
+
+  async function openLocalProject(id: string) {
+    if (id === projectId) {
+      return;
+    }
+
+    if (imageAsset && !window.confirm("Se abrirá otro proyecto. El actual ya está guardado automáticamente. ¿Continuar?")) {
+      return;
+    }
+
+    try {
+      const project = await getLocalProject(id);
+
+      if (!project?.image) {
+        throw new Error("Proyecto no encontrado");
+      }
+
+      hydrateProject(project, project.image);
+      setProjectId(project.id ?? id);
+      setProjectName(project.projectName?.trim() || project.imageName);
+      window.localStorage.setItem(CURRENT_PROJECT_KEY, project.id ?? id);
+      setProjectStatus("Proyecto abierto");
+    } catch {
+      setProjectStatus("No se pudo abrir el proyecto");
+    }
+  }
+
+  async function removeLocalProject(id: string) {
+    const project = localProjects.find((candidate) => candidate.id === id);
+
+    if (!window.confirm(`¿Eliminar “${project?.projectName ?? "este proyecto"}” del dispositivo? Esta acción no se puede deshacer.`)) {
+      return;
+    }
+
+    try {
+      await deleteLocalProject(id);
+      const projects = await listLocalProjects();
+      setLocalProjects(projects);
+
+      if (id === projectId) {
+        if (objectUrlRef.current) {
+          URL.revokeObjectURL(objectUrlRef.current);
+          objectUrlRef.current = null;
+        }
+        setImageAsset(null);
+        setImageBlob(null);
+        setProjectId(null);
+        setProjectName("");
+        resetWorkspace();
+        window.localStorage.removeItem(CURRENT_PROJECT_KEY);
+        setProjectStatus("Proyecto local eliminado");
+      }
+    } catch {
+      setProjectStatus("No se pudo eliminar el proyecto");
+    }
+  }
+
+  async function downloadProject() {
+    if (!imageBlob || !imageAsset) {
+      return;
+    }
+
+    const exportedProject: ExportedProject = {
+      ...createProjectData(),
+      projectName: projectName.trim() || imageAsset.name,
+      imageDataUrl: await readBlobAsDataUrl(imageBlob),
+    };
+    const projectBlob = new Blob([JSON.stringify(exportedProject)], { type: "application/json" });
+    const downloadUrl = URL.createObjectURL(projectBlob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = `${imageAsset.name.replace(/\.[^.]+$/, "") || "proyecto"}.medidas`;
+    link.click();
+    URL.revokeObjectURL(downloadUrl);
+    setProjectStatus("Archivo de proyecto descargado");
+  }
+
+  async function handleProjectFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    try {
+      if (imageAsset && !window.confirm("Se abrirá otro proyecto. El actual ya está guardado automáticamente. ¿Continuar?")) {
+        return;
+      }
+
+      const parsed: unknown = JSON.parse(await file.text());
+
+      if (!isProjectData(parsed)) {
+        throw new Error("Formato inválido");
+      }
+
+      const { imageDataUrl, ...project } = parsed;
+      hydrateProject(project, dataUrlToBlob(imageDataUrl));
+      const nextProjectId = crypto.randomUUID();
+      setProjectId(nextProjectId);
+      setProjectName(project.projectName?.trim() || project.imageName);
+      window.localStorage.setItem(CURRENT_PROJECT_KEY, nextProjectId);
+      setProjectStatus("Proyecto abierto; se guardará localmente");
+    } catch {
+      setProjectStatus("No se pudo abrir el proyecto");
+    }
+  }
 
   function resetWorkspace() {
     setToolMode("navigate");
@@ -1110,6 +1535,11 @@ export default function Home() {
       return;
     }
 
+    if (imageAsset && !window.confirm("Se reemplazará la imagen y se creará un proyecto nuevo. El proyecto actual ya está guardado automáticamente. ¿Continuar?")) {
+      event.target.value = "";
+      return;
+    }
+
     const nextUrl = URL.createObjectURL(file);
     const probe = new window.Image();
 
@@ -1119,6 +1549,13 @@ export default function Home() {
       }
 
       objectUrlRef.current = nextUrl;
+
+      projectReadyRef.current = true;
+      setImageBlob(file);
+      const nextProjectId = crypto.randomUUID();
+      setProjectId(nextProjectId);
+      setProjectName(file.name.replace(/\.[^.]+$/, "") || "Proyecto sin nombre");
+      window.localStorage.setItem(CURRENT_PROJECT_KEY, nextProjectId);
 
       setImageAsset({
         src: nextUrl,
@@ -1175,7 +1612,12 @@ export default function Home() {
       pixelsPerUnit: pixels / parsedDistance,
     };
 
+    if (!confirmRecalibration(nextCalibration)) {
+      return;
+    }
+
     setCalibration(nextCalibration);
+    recalculateAnnotations(nextCalibration);
     setLastCalibration(
       toCalibrationPreset(
         nextCalibration,
@@ -1190,7 +1632,14 @@ export default function Home() {
   }
 
   function applySavedCalibration(preset: SavedCalibrationPreset) {
-    setCalibration(applyCalibrationPresetValues(preset));
+    const nextCalibration = applyCalibrationPresetValues(preset);
+
+    if (!confirmRecalibration(nextCalibration)) {
+      return;
+    }
+
+    setCalibration(nextCalibration);
+    recalculateAnnotations(nextCalibration);
     setKnownDistance(String(preset.knownDistance));
     setManualPixels(formatNumber(preset.pixelsPerUnit * preset.knownDistance));
     setUnit(preset.unit);
@@ -1201,6 +1650,34 @@ export default function Home() {
     setCalibrationMethod("manual");
     setToolMode("measure");
     setLastCalibration(preset);
+  }
+
+  function confirmRecalibration(nextCalibration: Calibration) {
+    if (!calibration || (measurements.length === 0 && areas.length === 0)) {
+      return true;
+    }
+
+    const isSameScale = calibration.pixelsPerUnit === nextCalibration.pixelsPerUnit && calibration.unit === nextCalibration.unit;
+    return isSameScale || window.confirm(
+      `Se recalcularán ${measurements.length} mediciones y ${areas.length} áreas con la nueva escala. Los trazos se conservarán. ¿Continuar?`,
+    );
+  }
+
+  function recalculateAnnotations(nextCalibration: Calibration) {
+    setMeasurements((current) =>
+      current.map((measurement) => ({
+        ...measurement,
+        value: polylineLength(measurement.points) / nextCalibration.pixelsPerUnit,
+        unit: nextCalibration.unit,
+      })),
+    );
+    setAreas((current) =>
+      current.map((area) => ({
+        ...area,
+        value: polygonArea(area.points) / nextCalibration.pixelsPerUnit ** 2,
+        unit: nextCalibration.unit,
+      })),
+    );
   }
 
   function saveCurrentCalibration() {
@@ -2487,6 +2964,13 @@ export default function Home() {
         accept="image/png,image/jpeg,image/webp,image/tiff"
         onChange={handleFileChange}
       />
+      <input
+        ref={projectInputRef}
+        className={styles.hiddenInput}
+        type="file"
+        accept=".medidas,application/json"
+        onChange={handleProjectFileChange}
+      />
 
       <main className={styles.shell}>
         <section className={styles.workspace}>
@@ -2498,6 +2982,45 @@ export default function Home() {
                   <span>{imageAsset ? "Cambiar imagen" : "Subir imagen"}</span>
                 </span>
               </button>
+              <div className={styles.projectActions}>
+                <button className={styles.ghostButton} onClick={openProjectPicker}>
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="restore" />
+                    <span>Abrir proyecto</span>
+                  </span>
+                </button>
+                <button className={styles.ghostButton} onClick={downloadProject} disabled={!imageAsset}>
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="save" />
+                    <span>Guardar proyecto</span>
+                  </span>
+                </button>
+              </div>
+              {imageAsset ? (
+                <label className={styles.projectNameField}>
+                  <span>Nombre del proyecto</span>
+                  <input value={projectName} onChange={(event) => setProjectName(event.target.value)} placeholder="Proyecto sin nombre" />
+                </label>
+              ) : null}
+              <span className={styles.projectStatus} aria-live="polite">{projectStatus}</span>
+              {localProjects.length ? (
+                <div className={styles.projectLibrary}>
+                  <span className={styles.projectLibraryTitle}>Proyectos locales</span>
+                  <div className={styles.projectLibraryList}>
+                    {localProjects.map((project) => (
+                      <div className={styles.projectLibraryItem} key={project.id} data-active={project.id === projectId ? "true" : "false"}>
+                        <button className={styles.projectOpenButton} onClick={() => void openLocalProject(project.id)} type="button">
+                          <strong>{project.projectName}</strong>
+                          <span>{project.savedAt ? `Guardado ${new Intl.DateTimeFormat("es-CL", { dateStyle: "short", timeStyle: "short" }).format(project.savedAt)}` : "Proyecto guardado"}</span>
+                        </button>
+                        <button className={styles.projectDeleteButton} onClick={() => void removeLocalProject(project.id)} type="button" aria-label={`Eliminar ${project.projectName}`} title="Eliminar proyecto">
+                          <ActionIcon type="clear" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
             {renderPanelColumn("left")}
 
