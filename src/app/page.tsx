@@ -84,6 +84,13 @@ type ProjectSummary = {
   savedAt: number;
 };
 
+type ConfirmationDialog = {
+  title: string;
+  message: string;
+  confirmLabel: string;
+  danger?: boolean;
+};
+
 type Calibration = {
   start?: Point | null;
   end?: Point | null;
@@ -272,6 +279,7 @@ function ActionIcon({
     | "close"
     | "png"
     | "jpg"
+    | "xlsx"
     | "hide"
     | "show"
     | "reset";
@@ -329,12 +337,12 @@ function ActionIcon({
           <path d="M5.5 5.5 14.5 14.5" opacity="0.25" />
         </>
       ) : null}
-      {type === "png" || type === "jpg" ? (
+      {type === "png" || type === "jpg" || type === "xlsx" ? (
         <>
           <rect x="4.5" y="3.5" width="11" height="13" rx="2" />
           <path d="M7.5 8.5h5" />
           <path d="M7.5 11h5" />
-          <path d="M7.5 13.5h3.5" />
+          <path d={type === "xlsx" ? "M7.5 13.5l1.5-2 1.5 2 1.5-2" : "M7.5 13.5h3.5"} />
         </>
       ) : null}
       {type === "hide" ? (
@@ -862,6 +870,7 @@ export default function Home() {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
   const projectReadyRef = useRef(false);
+  const confirmationResolveRef = useRef<((confirmed: boolean) => void) | null>(null);
   const dragRef = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
   const gestureZoomRef = useRef<{ active: boolean; baseZoom: number } | null>(null);
@@ -893,6 +902,7 @@ export default function Home() {
   const [lastCalibration, setLastCalibration] = useState<SavedCalibrationPreset | null>(null);
   const [storageReady, setStorageReady] = useState(false);
   const [projectStatus, setProjectStatus] = useState("Preparando guardado local");
+  const [confirmationDialog, setConfirmationDialog] = useState<ConfirmationDialog | null>(null);
   const [presetName, setPresetName] = useState("");
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
   const [areas, setAreas] = useState<AreaMeasurement[]>([]);
@@ -1388,12 +1398,29 @@ export default function Home() {
     projectInputRef.current?.click();
   }
 
+  function requestConfirmation(dialog: ConfirmationDialog) {
+    return new Promise<boolean>((resolve) => {
+      confirmationResolveRef.current = resolve;
+      setConfirmationDialog(dialog);
+    });
+  }
+
+  function closeConfirmation(confirmed: boolean) {
+    confirmationResolveRef.current?.(confirmed);
+    confirmationResolveRef.current = null;
+    setConfirmationDialog(null);
+  }
+
   async function openLocalProject(id: string) {
     if (id === projectId) {
       return;
     }
 
-    if (imageAsset && !window.confirm("Se abrirá otro proyecto. El actual ya está guardado automáticamente. ¿Continuar?")) {
+    if (imageAsset && !await requestConfirmation({
+      title: "Abrir otro proyecto",
+      message: "El proyecto actual ya está guardado automáticamente. ¿Quieres abrir el proyecto seleccionado?",
+      confirmLabel: "Abrir proyecto",
+    })) {
       return;
     }
 
@@ -1417,7 +1444,12 @@ export default function Home() {
   async function removeLocalProject(id: string) {
     const project = localProjects.find((candidate) => candidate.id === id);
 
-    if (!window.confirm(`¿Eliminar “${project?.projectName ?? "este proyecto"}” del dispositivo? Esta acción no se puede deshacer.`)) {
+    if (!await requestConfirmation({
+      title: "Eliminar proyecto",
+      message: `Se eliminará “${project?.projectName ?? "este proyecto"}” de este dispositivo. Esta acción no se puede deshacer.`,
+      confirmLabel: "Eliminar proyecto",
+      danger: true,
+    })) {
       return;
     }
 
@@ -1473,7 +1505,11 @@ export default function Home() {
     }
 
     try {
-      if (imageAsset && !window.confirm("Se abrirá otro proyecto. El actual ya está guardado automáticamente. ¿Continuar?")) {
+      if (imageAsset && !await requestConfirmation({
+        title: "Abrir otro proyecto",
+        message: "El proyecto actual ya está guardado automáticamente. ¿Quieres abrir el archivo seleccionado?",
+        confirmLabel: "Abrir proyecto",
+      })) {
         return;
       }
 
@@ -1528,14 +1564,18 @@ export default function Home() {
     fileInputRef.current?.click();
   }
 
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
 
     if (!file) {
       return;
     }
 
-    if (imageAsset && !window.confirm("Se reemplazará la imagen y se creará un proyecto nuevo. El proyecto actual ya está guardado automáticamente. ¿Continuar?")) {
+    if (imageAsset && !await requestConfirmation({
+      title: "Crear un proyecto nuevo",
+      message: "Se reemplazará la imagen y se creará un proyecto nuevo. El actual ya está guardado automáticamente.",
+      confirmLabel: "Cambiar imagen",
+    })) {
       event.target.value = "";
       return;
     }
@@ -1591,7 +1631,7 @@ export default function Home() {
     };
   }
 
-  function applyCalibration() {
+  async function applyCalibration() {
     const parsedDistance = Number(knownDistance);
     const pixels =
       calibrationMethod === "manual"
@@ -1612,7 +1652,7 @@ export default function Home() {
       pixelsPerUnit: pixels / parsedDistance,
     };
 
-    if (!confirmRecalibration(nextCalibration)) {
+    if (!await confirmRecalibration(nextCalibration)) {
       return;
     }
 
@@ -1631,10 +1671,10 @@ export default function Home() {
     setToolMode("measure");
   }
 
-  function applySavedCalibration(preset: SavedCalibrationPreset) {
+  async function applySavedCalibration(preset: SavedCalibrationPreset) {
     const nextCalibration = applyCalibrationPresetValues(preset);
 
-    if (!confirmRecalibration(nextCalibration)) {
+    if (!await confirmRecalibration(nextCalibration)) {
       return;
     }
 
@@ -1652,15 +1692,17 @@ export default function Home() {
     setLastCalibration(preset);
   }
 
-  function confirmRecalibration(nextCalibration: Calibration) {
+  async function confirmRecalibration(nextCalibration: Calibration) {
     if (!calibration || (measurements.length === 0 && areas.length === 0)) {
       return true;
     }
 
     const isSameScale = calibration.pixelsPerUnit === nextCalibration.pixelsPerUnit && calibration.unit === nextCalibration.unit;
-    return isSameScale || window.confirm(
-      `Se recalcularán ${measurements.length} mediciones y ${areas.length} áreas con la nueva escala. Los trazos se conservarán. ¿Continuar?`,
-    );
+    return isSameScale || requestConfirmation({
+      title: "Recalcular con nueva escala",
+      message: `Se recalcularán ${measurements.length} mediciones y ${areas.length} áreas. Los trazos se conservarán.`,
+      confirmLabel: "Recalcular",
+    });
   }
 
   function recalculateAnnotations(nextCalibration: Calibration) {
@@ -2355,6 +2397,139 @@ export default function Home() {
     setInstallPrompt(null);
   }
 
+  async function exportMeasurementsWorkbook() {
+    if (!imageAsset || (measurements.length === 0 && areas.length === 0)) {
+      return;
+    }
+
+    const { Workbook } = await import("exceljs");
+    const workbook = new Workbook();
+    workbook.creator = "Medidas";
+    workbook.created = new Date();
+
+    const titleStyle = {
+      font: { bold: true, size: 14, color: { argb: "FFFFFFFF" } },
+      fill: { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FF111F50" } },
+      alignment: { vertical: "middle" as const },
+    };
+    const headerStyle = {
+      font: { bold: true, color: { argb: "FFFFFFFF" } },
+      fill: { type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: "FF24377B" } },
+      alignment: { vertical: "middle" as const, horizontal: "center" as const },
+    };
+    const border = { style: "thin" as const, color: { argb: "FFD9E0EF" } };
+    const baseName = (projectName.trim() || imageAsset.name.replace(/\.[^.]+$/, "") || "mediciones").replace(/[\\/:*?"<>|]/g, "-");
+
+    const summary = workbook.addWorksheet("Resumen", { views: [{ showGridLines: false }] });
+    summary.mergeCells("A1:D1");
+    summary.getCell("A1").value = "Resumen de mediciones";
+    Object.assign(summary.getCell("A1"), titleStyle);
+    summary.getRow(1).height = 27;
+    const summaryRows = [
+      ["Proyecto", baseName],
+      ["Imagen", imageAsset.name],
+      ["Exportado", new Date()],
+      ["Escala", calibration ? `1 ${calibration.unit} = ${formatPixels(calibration.pixelsPerUnit)}` : "Sin calibración"],
+      ["Contenido", `${measurements.length} mediciones · ${areas.length} áreas`],
+    ];
+    summaryRows.forEach((values, index) => {
+      const row = summary.getRow(index + 3);
+      row.values = values;
+      row.getCell(1).font = { bold: true, color: { argb: "FF111F50" } };
+      row.eachCell((cell) => {
+        cell.border = { top: border, left: border, bottom: border, right: border };
+      });
+    });
+    summary.getCell("B5").numFmt = "yyyy-mm-dd hh:mm";
+    summary.getColumn(1).width = 18;
+    summary.getColumn(2).width = 48;
+
+    const configureDataSheet = (sheet: import("exceljs").Worksheet, title: string, headers: string[], widths: number[]) => {
+      sheet.views = [{ state: "frozen", ySplit: 3, showGridLines: false }];
+      sheet.mergeCells(1, 1, 1, headers.length);
+      sheet.getCell(1, 1).value = title;
+      Object.assign(sheet.getCell(1, 1), titleStyle);
+      sheet.getRow(1).height = 27;
+      sheet.getRow(3).values = headers;
+      Object.assign(sheet.getRow(3), headerStyle);
+      sheet.getRow(3).height = 22;
+      widths.forEach((width, index) => {
+        sheet.getColumn(index + 1).width = width;
+      });
+    };
+
+    const measurementSheet = workbook.addWorksheet("Mediciones");
+    const measurementHeaders = ["N°", "Nombre", "Valor", "Unidad", "Puntos", "Extremos", "Etiqueta", "Color"];
+    configureDataSheet(measurementSheet, "Mediciones", measurementHeaders, [7, 24, 15, 12, 10, 14, 13, 12]);
+    measurements.forEach((measurement, index) => {
+      const row = measurementSheet.addRow([
+        index + 1,
+        measurement.name,
+        measurement.value,
+        measurement.unit,
+        measurement.points.length,
+        measurement.endCap === "tick" ? "Línea" : "Círculo",
+        measurement.showLabel ? "Visible" : "Oculta",
+        measurement.color,
+      ]);
+      row.getCell(3).numFmt = "#,##0.###";
+      row.getCell(3).alignment = { horizontal: "right" };
+      row.eachCell((cell) => {
+        cell.border = { bottom: border };
+        cell.alignment = { vertical: "middle" };
+      });
+      if (index % 2 === 1) {
+        row.eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5F7FC" } };
+        });
+      }
+      row.getCell(8).fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${measurement.color.slice(1).toUpperCase()}` } };
+      row.getCell(8).font = { color: { argb: "FFFFFFFF" }, bold: true };
+    });
+    measurementSheet.autoFilter = { from: "A3", to: `H${Math.max(3, measurements.length + 3)}` };
+
+    const areaSheet = workbook.addWorksheet("Áreas");
+    const areaHeaders = ["N°", "Nombre", "Área", "Unidad", "Vértices", "Etiqueta", "Color"];
+    configureDataSheet(areaSheet, "Áreas", areaHeaders, [7, 24, 15, 12, 12, 13, 12]);
+    areas.forEach((area, index) => {
+      const displayArea = getAreaDisplayValue(area.value, area.unit, areaDisplayUnit);
+      const row = areaSheet.addRow([
+        index + 1,
+        area.name,
+        displayArea.value,
+        displayArea.unitLabel,
+        area.points.length,
+        area.showLabel ? "Visible" : "Oculta",
+        area.color,
+      ]);
+      row.getCell(3).numFmt = "#,##0.###";
+      row.getCell(3).alignment = { horizontal: "right" };
+      row.eachCell((cell) => {
+        cell.border = { bottom: border };
+        cell.alignment = { vertical: "middle" };
+      });
+      if (index % 2 === 1) {
+        row.eachCell((cell) => {
+          cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5F7FC" } };
+        });
+      }
+      row.getCell(7).fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${area.color.slice(1).toUpperCase()}` } };
+      row.getCell(7).font = { color: { argb: "FFFFFFFF" }, bold: true };
+    });
+    areaSheet.autoFilter = { from: "A3", to: `G${Math.max(3, areas.length + 3)}` };
+
+    const workbookBuffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([workbookBuffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+    const downloadUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = downloadUrl;
+    link.download = `${baseName}-mediciones.xlsx`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+  }
+
   const draftCalibrationPixels =
     calibrationDraft.length === 2 ? distanceBetween(calibrationDraft[0], calibrationDraft[1]) : 0;
   const draftMeasurementPixels = polylineLength(measurementDraft);
@@ -2694,6 +2869,12 @@ export default function Home() {
                     <span>Exportar JPG</span>
                   </span>
                 </button>
+                <button className={styles.secondaryButton} onClick={exportMeasurementsWorkbook} disabled={!imageAsset || (measurements.length === 0 && areas.length === 0)}>
+                  <span className={styles.buttonContent}>
+                    <ActionIcon type="xlsx" />
+                    <span>Exportar Excel</span>
+                  </span>
+                </button>
                 <button className={styles.ghostButton} onClick={() => setShowScaleBar((current) => !current)} disabled={!calibration}>
                   <span className={styles.buttonContent}>
                     <ActionIcon type={showScaleBar ? "hide" : "show"} />
@@ -2971,6 +3152,33 @@ export default function Home() {
         accept=".medidas,application/json"
         onChange={handleProjectFileChange}
       />
+      {confirmationDialog ? (
+        <div className={styles.modalBackdrop} onMouseDown={() => closeConfirmation(false)}>
+          <section
+            className={styles.confirmationModal}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="confirmation-dialog-title"
+            aria-describedby="confirmation-dialog-message"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <h2 id="confirmation-dialog-title">{confirmationDialog.title}</h2>
+            <p id="confirmation-dialog-message">{confirmationDialog.message}</p>
+            <div className={styles.modalActions}>
+              <button className={styles.ghostButton} onClick={() => closeConfirmation(false)} type="button" autoFocus>
+                Cancelar
+              </button>
+              <button
+                className={confirmationDialog.danger ? styles.dangerButton : styles.secondaryButton}
+                onClick={() => closeConfirmation(true)}
+                type="button"
+              >
+                {confirmationDialog.confirmLabel}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
 
       <main className={styles.shell}>
         <section className={styles.workspace}>

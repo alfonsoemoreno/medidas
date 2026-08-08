@@ -200,6 +200,59 @@
   background: rgba(161, 48, 48, 0.1);
 }
 
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(9, 15, 34, 0.46);
+  backdrop-filter: blur(5px);
+}
+
+.confirmationModal {
+  width: min(100%, 440px);
+  padding: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 24px 70px rgba(7, 12, 24, 0.3);
+}
+
+.confirmationModal h2 {
+  color: var(--brand-700);
+  font-size: 1.1rem;
+  letter-spacing: -0.02em;
+}
+
+.confirmationModal p {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+.dangerButton {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 15px;
+  background: linear-gradient(135deg, #9f2e38, #c4434f);
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 12px 26px rgba(159, 46, 56, 0.2);
+}
+
 .panelShell {
   position: relative;
   transition:
