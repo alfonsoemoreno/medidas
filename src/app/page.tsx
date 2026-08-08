@@ -2420,30 +2420,6 @@ export default function Home() {
     const border = { style: "thin" as const, color: { argb: "FFD9E0EF" } };
     const baseName = (projectName.trim() || imageAsset.name.replace(/\.[^.]+$/, "") || "mediciones").replace(/[\\/:*?"<>|]/g, "-");
 
-    const summary = workbook.addWorksheet("Resumen", { views: [{ showGridLines: false }] });
-    summary.mergeCells("A1:D1");
-    summary.getCell("A1").value = "Resumen de mediciones";
-    Object.assign(summary.getCell("A1"), titleStyle);
-    summary.getRow(1).height = 27;
-    const summaryRows = [
-      ["Proyecto", baseName],
-      ["Imagen", imageAsset.name],
-      ["Exportado", new Date()],
-      ["Escala", calibration ? `1 ${calibration.unit} = ${formatPixels(calibration.pixelsPerUnit)}` : "Sin calibración"],
-      ["Contenido", `${measurements.length} mediciones · ${areas.length} áreas`],
-    ];
-    summaryRows.forEach((values, index) => {
-      const row = summary.getRow(index + 3);
-      row.values = values;
-      row.getCell(1).font = { bold: true, color: { argb: "FF111F50" } };
-      row.eachCell((cell) => {
-        cell.border = { top: border, left: border, bottom: border, right: border };
-      });
-    });
-    summary.getCell("B5").numFmt = "yyyy-mm-dd hh:mm";
-    summary.getColumn(1).width = 18;
-    summary.getColumn(2).width = 48;
-
     const configureDataSheet = (sheet: import("exceljs").Worksheet, title: string, headers: string[], widths: number[]) => {
       sheet.views = [{ state: "frozen", ySplit: 3, showGridLines: false }];
       sheet.mergeCells(1, 1, 1, headers.length);
@@ -2459,18 +2435,14 @@ export default function Home() {
     };
 
     const measurementSheet = workbook.addWorksheet("Mediciones");
-    const measurementHeaders = ["N°", "Nombre", "Valor", "Unidad", "Puntos", "Extremos", "Etiqueta", "Color"];
-    configureDataSheet(measurementSheet, "Mediciones", measurementHeaders, [7, 24, 15, 12, 10, 14, 13, 12]);
+    const measurementHeaders = ["N°", "Nombre", "Valor", "Unidad"];
+    configureDataSheet(measurementSheet, "Mediciones", measurementHeaders, [7, 28, 16, 14]);
     measurements.forEach((measurement, index) => {
       const row = measurementSheet.addRow([
         index + 1,
         measurement.name,
         measurement.value,
         measurement.unit,
-        measurement.points.length,
-        measurement.endCap === "tick" ? "Línea" : "Círculo",
-        measurement.showLabel ? "Visible" : "Oculta",
-        measurement.color,
       ]);
       row.getCell(3).numFmt = "#,##0.###";
       row.getCell(3).alignment = { horizontal: "right" };
@@ -2483,14 +2455,12 @@ export default function Home() {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5F7FC" } };
         });
       }
-      row.getCell(8).fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${measurement.color.slice(1).toUpperCase()}` } };
-      row.getCell(8).font = { color: { argb: "FFFFFFFF" }, bold: true };
     });
-    measurementSheet.autoFilter = { from: "A3", to: `H${Math.max(3, measurements.length + 3)}` };
+    measurementSheet.autoFilter = { from: "A3", to: `D${Math.max(3, measurements.length + 3)}` };
 
     const areaSheet = workbook.addWorksheet("Áreas");
-    const areaHeaders = ["N°", "Nombre", "Área", "Unidad", "Vértices", "Etiqueta", "Color"];
-    configureDataSheet(areaSheet, "Áreas", areaHeaders, [7, 24, 15, 12, 12, 13, 12]);
+    const areaHeaders = ["N°", "Nombre", "Valor", "Unidad"];
+    configureDataSheet(areaSheet, "Áreas", areaHeaders, [7, 28, 16, 14]);
     areas.forEach((area, index) => {
       const displayArea = getAreaDisplayValue(area.value, area.unit, areaDisplayUnit);
       const row = areaSheet.addRow([
@@ -2498,9 +2468,6 @@ export default function Home() {
         area.name,
         displayArea.value,
         displayArea.unitLabel,
-        area.points.length,
-        area.showLabel ? "Visible" : "Oculta",
-        area.color,
       ]);
       row.getCell(3).numFmt = "#,##0.###";
       row.getCell(3).alignment = { horizontal: "right" };
@@ -2513,10 +2480,8 @@ export default function Home() {
           cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF5F7FC" } };
         });
       }
-      row.getCell(7).fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${area.color.slice(1).toUpperCase()}` } };
-      row.getCell(7).font = { color: { argb: "FFFFFFFF" }, bold: true };
     });
-    areaSheet.autoFilter = { from: "A3", to: `G${Math.max(3, areas.length + 3)}` };
+    areaSheet.autoFilter = { from: "A3", to: `D${Math.max(3, areas.length + 3)}` };
 
     const workbookBuffer = await workbook.xlsx.writeBuffer();
     const blob = new Blob([workbookBuffer], {
