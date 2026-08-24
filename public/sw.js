@@ -1,4 +1,7 @@
-const CACHE_NAME = "escala-medicion-v2";
+// Never cache Next.js build chunks here. Each deployment has its own chunk
+// graph, so a stale chunk can prevent dynamic imports (such as ExcelJS) from
+// loading after an update.
+const CACHE_NAME = "escala-medicion-v3";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -39,13 +42,15 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put("/", copy));
+          if (response.ok) {
+            const copy = response.clone();
+            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put("/", copy)));
+          }
           return response;
         })
         .catch(async () => {
           const cached = await caches.match(request);
-          return cached || caches.match("/");
+          return cached || (await caches.match("/")) || Response.error();
         }),
     );
     return;
@@ -54,8 +59,7 @@ self.addEventListener("fetch", (event) => {
   const isSameOrigin = url.origin === self.location.origin;
   const isStaticAsset =
     isSameOrigin &&
-    (url.pathname.startsWith("/_next/static/") ||
-      url.pathname === "/icon-144.png" ||
+    (url.pathname === "/icon-144.png" ||
       url.pathname === "/icon-192.png" ||
       url.pathname === "/icon.png" ||
       url.pathname === "/apple-icon.png" ||
@@ -72,11 +76,13 @@ self.addEventListener("fetch", (event) => {
     caches.match(request).then((cached) => {
       const networkFetch = fetch(request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          if (response.ok) {
+            const copy = response.clone();
+            event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.put(request, copy)));
+          }
           return response;
         })
-        .catch(() => cached);
+        .catch(() => cached || Response.error());
 
       return cached || networkFetch;
     }),
